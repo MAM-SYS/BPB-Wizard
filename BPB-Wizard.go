@@ -180,7 +180,6 @@ func deployBPB(ctx context.Context) {
 			successMessage("Worker downloaded successfully!")
 			break
 		}
-		fmt.Printf("\n%s Get Worker settings...\n", title)
 		var workerName string
 		for {
 			workerName = generateRandomDomain(32)
@@ -250,7 +249,7 @@ func deployBPB(ctx context.Context) {
 		successMessage("KV created successfully!")
 		var project *pages.Project
 		for {
-			fmt.Printf("\n%s Deploying Page...\n", title)
+			fmt.Printf("\n%s Creating Page...\n", title)
 			project, err = createPage(ctx, workerName, uid, pass, proxyIP, fallback, subPath, kvNameSpace)
 			if err != nil {
 				failMessage("Error deploying page", err)
@@ -264,6 +263,7 @@ func deployBPB(ctx context.Context) {
 		}
 
 		for {
+			fmt.Printf("\n%s Deploying Page...\n", title)
 			_, err = deployPage(ctx, project, workerPath)
 			if err != nil {
 				failMessage("Error deploying page", err)
@@ -275,7 +275,11 @@ func deployBPB(ctx context.Context) {
 			successMessage("Page deployed successfully!")
 			break
 		}
-		successMessage("All Done, Now we wait")
+		panel := "https://" + project.Subdomain + "/panel"
+		fmt.Printf("\n%s PBP Panel deployed on %s%s%s but %snot ready%s yet. Waiting...\n", title, red, panel, reset, red, reset)
+		done := make(chan struct{})
+		go checkBPBPanel(project.Subdomain, done)
+		<-done
 	}
 }
 
@@ -284,6 +288,33 @@ func promptUser(prompt string) string {
 	var response string
 	fmt.Scanln(&response)
 	return strings.TrimSpace(response)
+}
+
+func checkBPBPanel(url string, done chan<- struct{}) {
+	ticker := time.NewTicker(5 * time.Second)
+	for range ticker.C {
+		resp, err := http.Get(url)
+		if err != nil {
+			fmt.Printf(".")
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			fmt.Printf(".")
+			continue
+		}
+		defer resp.Body.Close()
+		successMessage(fmt.Sprintf("\nBPB panel is ready -> %s", url))
+		prompt := fmt.Sprintf("Would you like to open %sBPB panel%s in browser? (y/n): ", blue, reset)
+		if response := promptUser(prompt); strings.ToLower(response) == "n" {
+			return
+		}
+		if err = openURL(url); err != nil {
+			failMessage("Error opening panel", err)
+			return
+		}
+		done <- struct{}{}
+		return
+	}
 }
 
 func generateRandomString(charSet string, length int, isDomain bool) string {
