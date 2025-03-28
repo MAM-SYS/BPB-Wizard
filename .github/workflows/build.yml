@@ -18,7 +18,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.21"
+          go-version: "1.24"
           check-latest: true
 
       - name: Install ARM64 Cross Compiler
@@ -36,6 +36,15 @@ jobs:
 
       - name: Install dependencies
         run: go mod tidy
+
+      - name: Determine Release Draft Status
+        id: draft_status
+        run: |
+          if [[ "${{ github.ref_name }}" == "main" ]]; then
+            echo "is_draft=false" >> $GITHUB_OUTPUT
+          else
+            echo "is_draft=true" >> $GITHUB_OUTPUT
+          fi
 
       - name: Get the Git tag version
         id: get_version
@@ -73,33 +82,12 @@ jobs:
             done
           done
 
-#      - name: Create GitHub Release
-#        uses: softprops/action-gh-release@v2
-#        with:
-#          files: build/*
-
-      - name: Create Github Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ steps.get_version.outputs.VERSION }}
-          release_name: Release ${{ steps.get_version.outputs.VERSION }}
-          draft: true
-          prerelease: true
-#      - name: Upload release assets
-#        uses: actions/upload-artifact@v4
-#        with:
-#          name: action-gh-release
-#          path: build/
-#          retention-days: 5
-
       - name: Upload Release Assets
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: build/*
           tag: ${{ steps.get_version.outputs.VERSION }}
+          draft: ${{ steps.draft_status.outputs.is_draft }}
           overwrite: true
           file_glob: true

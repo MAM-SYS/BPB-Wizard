@@ -276,7 +276,7 @@ func deployBPB(ctx context.Context) {
 			break
 		}
 		panel := "https://" + project.Subdomain + "/panel"
-		fmt.Printf("\n%s PBP Panel deployed on %s%s%s but %snot ready%s yet. Waiting...\n", title, red, panel, reset, red, reset)
+		fmt.Printf("\n%s PBP Panel deployed on %s%s%s but %snot ready%s yet. Waiting...\n", title, green, panel, reset, red, reset)
 		done := make(chan struct{})
 		go checkBPBPanel(project.Subdomain, done)
 		<-done
