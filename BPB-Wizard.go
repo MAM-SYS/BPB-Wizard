@@ -1,281 +1,286 @@
 package main
 
 import (
-	"archive/zip"
 	"bytes"
+	"context"
+	"crypto/sha256"
 	_ "embed"
-	"encoding/json"
+	"encoding/base64"
 	"fmt"
 	"io"
-	"math/rand"
+	"math/rand/v2"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"time"
 
+	cf "github.com/cloudflare/cloudflare-go/v4"
+	"github.com/cloudflare/cloudflare-go/v4/accounts"
+	"github.com/cloudflare/cloudflare-go/v4/kv"
+	"github.com/cloudflare/cloudflare-go/v4/option"
+	"github.com/cloudflare/cloudflare-go/v4/pages"
+	"github.com/cloudflare/cloudflare-go/v4/workers"
 	"github.com/google/uuid"
+	"golang.org/x/oauth2"
 )
-
-type KVNamespaceBinding struct {
-	Binding string `json:"binding"`
-	Id      string `json:"id"`
-}
-
-type KVNamespace struct {
-	Title string `json:"title"`
-	ID    string `json:"id"`
-}
-
-type WranglerConfig struct {
-	Name                string               `json:"name"`
-	Main                string               `json:"main"`
-	Compatibility_date  string               `json:"compatibility_date"`
-	Compatibility_flags []string             `json:"compatibility_flags"`
-	Workers_dev         bool                 `json:"workers_dev"`
-	Kv_namespaces       []KVNamespaceBinding `json:"kv_namespaces"`
-	Vars                workerSettings       `json:"vars"`
-}
-
-type workerSettings struct {
-	Uuid     string `json:"UUID"`
-	TrPass   string `json:"TR_PASS"`
-	ProxyIP  string `json:"PROXY_IP"`
-	Fallback string `json:"FALLBACK"`
-	SubPath  string `json:"SUB_PATH"`
-}
 
 var (
-	kvID       string
-	workerName string
-	UUID       string
-	TR_PASS    string
-	PROXY_IP   string
-	FALLBACK   string
-	SUB_PATH   string
-	red        = "\033[31m"
-	green      = "\033[32m"
-	reset      = "\033[0m"
-	orange     = "\033[38;2;255;165;0m"
-	blue       = "\033[94m"
-	bold       = "\033[1m"
-	title      = bold + blue + "●" + reset
-	ask        = bold + "-" + reset
-	info       = bold + "+" + reset
+	red    = "\033[31m"
+	green  = "\033[32m"
+	reset  = "\033[0m"
+	orange = "\033[38;2;255;165;0m"
+	blue   = "\033[94m"
+	bold   = "\033[1m"
+	title  = bold + blue + "●" + reset
+	ask    = bold + "-" + reset
+	info   = bold + "+" + reset
 )
 
-//go:embed bundles/node-v22.14.0-win-x64.zip
-var embeddedNodeZip []byte
-
-//go:embed bundles/wrangler.zip
-var embeddedWranglerZip []byte
-
-func main() {
-
-	if runtime.GOOS != "windows" {
-		failMessage("Unsupported OS. This script is for Windows only.", nil)
-		return
+var (
+	cfClient       *cf.Client
+	cfAccount      *accounts.Account
+	codeVerifier   string
+	oauthState     string
+	oauthTokenChan = make(chan *oauth2.Token)
+	oauthConfig    = &oauth2.Config{
+		ClientID:     "54d11594-84e4-41aa-b438-e81b8fa78ee7",
+		ClientSecret: "",
+		RedirectURL:  "http://localhost:8976/oauth/callback",
+		Endpoint: oauth2.Endpoint{
+			AuthURL:  "https://dash.cloudflare.com/oauth2/auth",
+			TokenURL: "https://dash.cloudflare.com/oauth2/token",
+		},
+		Scopes: []string{
+			"account:read", "user:read", "workers:write", "workers_kv:write",
+			"workers_routes:write", "workers_scripts:write", "workers_tail:read",
+			"d1:write", "pages:write", "zone:read", "ssl_certs:write",
+			"ai:write", "queues:write", "pipelines:write", "secrets_store:write",
+		},
 	}
+)
 
-	installDir := filepath.Join(os.Getenv("USERPROFILE"), ".bpb-wizard")
-	nodeDir := filepath.Join(installDir, "node-v22.14.0-win-x64")
-	wranglerConfigPath := filepath.Join(installDir, "wrangler.json")
-	nodeZipPath := filepath.Join(os.TempDir(), "node-v22.14.0-win-x64.zip")
-	wranglerZipPath := filepath.Join(os.TempDir(), "wrangler.zip")
-	workerURL := "https://github.com/bia-pain-bache/BPB-Worker-Panel/releases/latest/download/worker.js"
-	workerPath := filepath.Join(installDir, "worker.js")
-
-	currentPath := os.Getenv("PATH")
-	newPath := fmt.Sprintf("%s;%s", nodeDir, currentPath)
-	if err := os.Setenv("PATH", newPath); err != nil {
-		failMessage("Error setting PATH environment variable", err)
-		return
-	}
-	fmt.Printf("\n%s Installing %sBPB Wizard%s...\n", title, blue, reset)
-
-	if _, err := runCommand(installDir, "npx", "wrangler", "-v"); err != nil {
-		if err := os.WriteFile(nodeZipPath, embeddedNodeZip, 0644); err != nil {
-			failMessage("Error copying Node.js", err)
-			return
-		}
-
-		if err := os.WriteFile(wranglerZipPath, embeddedWranglerZip, 0644); err != nil {
-			failMessage("Error copying Wrangler", err)
-			return
-		}
-
-		successMessage("Files copied successfuly.")
-		if err := unzip(nodeZipPath, installDir); err != nil {
-			failMessage("Error extracting Node.js", err)
-			return
-		}
-
-		if err := unzip(wranglerZipPath, installDir); err != nil {
-			failMessage("Error extracting Wrangler", err)
-			return
-		}
-		successMessage("Dependencies installed successfully!")
-	} else {
-		successMessage("BPB Wizard is already installed!")
-	}
-
-	fmt.Printf("\n%s Downloading %sworker.js%s...\n", title, green, reset)
-	for {
-		if err := downloadFile(workerURL, workerPath); err != nil {
-			failMessage("Error downloading worker.js", err)
-			if response := promptUser("Would you like to try again? (y/n): "); strings.ToLower(response) == "n" {
-				return
-			}
-			continue
-		}
-		successMessage("Worker downloaded successfully!")
-		break
-	}
-
-	fmt.Printf("\n%s Login %sCloudflare%s...\n", title, orange, reset)
-	for {
-		if _, err := runCommand(installDir, "npx", "wrangler", "login"); err != nil {
-			failMessage("Error logging into Cloudflare", err)
-			if response := promptUser("Would you like to try again? (y/n): "); strings.ToLower(response) == "n" {
-				return
-			}
-			continue
-		}
-		successMessage("Cloudflare logged in successfully!")
-		break
-	}
-
-	fmt.Printf("\n%s Get Worker settings...\n", title)
-	var prompt string
-	for {
-		workerName = generateRandomDomain(32)
-		fmt.Printf("\n%s The random generated worker name (%sSubdomain%s) is: %s%s%s\n", info, green, reset, orange, workerName, reset)
-		if response := promptUser("Please enter a custom worker name or press ENTER to use generated one: "); response != "" {
-			if strings.Contains(strings.ToLower(response), "bpb") {
-				message := fmt.Sprintf("Worker name cannot contain %sbpb%s! Please try another name.", red, reset)
-				failMessage(message, nil)
-				continue
-			}
-			workerName = response
-		}
-
-		if resp := isWorkerAvailable(installDir, workerName); resp {
-			prompt = fmt.Sprintf("This worker already exists! This will %sRESET%s all panel settings, would you like to override it? (y/n): ", red, reset)
-			if response := promptUser(prompt); strings.ToLower(response) == "n" {
-				continue
-			}
-		}
-		break
-	}
-
-	UUID = uuid.NewString()
-	fmt.Printf("\n%s The random generated %sUUID%s is: %s%s%s\n", info, green, reset, orange, UUID, reset)
-	if response := promptUser("Please enter a custom UUID or press ENTER to use generated one: "); response != "" {
-		UUID = response
-	}
-
-	TR_PASS = generateTrPassword(12)
-	fmt.Printf("\n%s The random generated %sTrojan password%s is: %s%s%s\n", info, green, reset, orange, TR_PASS, reset)
-	if response := promptUser("Please enter a custom Trojan password or press ENTER to use generated one: "); response != "" {
-		TR_PASS = response
-	}
-
-	PROXY_IP = "bpb.yousef.isegaro.com"
-	fmt.Printf("\n%s The default %sProxy IP%s is: %s%s%s\n", info, green, reset, orange, PROXY_IP, reset)
-	if response := promptUser("Please enter custom Proxy IP/Domains or press ENTER to use default: "); response != "" {
-		PROXY_IP = response
-	}
-
-	FALLBACK = "speed.cloudflare.com"
-	fmt.Printf("\n%s The default %sFallback domain%s is: %s%s%s\n", info, green, reset, orange, FALLBACK, reset)
-	if response := promptUser("Please enter a custom Fallback domain or press ENTER to use default: "); response != "" {
-		FALLBACK = response
-	}
-
-	SUB_PATH = generateSubURIPath(16)
-	fmt.Printf("\n%s The random generated %sSubscription path%s is: %s%s%s\n", info, green, reset, orange, SUB_PATH, reset)
-	if response := promptUser("Please enter a custom Subscription path or press ENTER to use generated one: "); response != "" {
-		SUB_PATH = response
-	}
-
-	fmt.Printf("\n%s Creating KV namespace...\n", title)
-	for {
-		now := time.Now().Format("2006-01-02_15-04-05")
-		kvName := fmt.Sprintf("panel-kv-%s", now)
-		output, err := runCommand(installDir, "npx", "wrangler", "kv", "namespace", "create", kvName)
-		if err != nil {
-			failMessage("Error creating KV!", err)
-			if response := promptUser("Would you like to try again? (y/n): "); strings.ToLower(response) == "n" {
-				return
-			}
-			continue
-		}
-
-		id, err := extractKvID(output)
-		if err != nil {
-			failMessage("Error getting KV ID", err)
-			return
-		}
-
-		kvID = id
-		break
-	}
-	successMessage("KV created successfully!")
-
-	fmt.Printf("\n%s Building worker configuration...\n", title)
-	if err := buildWranglerConfig(wranglerConfigPath, workerPath); err != nil {
-		failMessage("Error building Wrangler configuration", err)
-		return
-	}
-	successMessage("Worker configuration built successfully!")
-
-	for {
-		fmt.Printf("\n%s Deploying worker...\n", title)
-		output, err := runCommand(installDir, "npx", "wrangler", "deploy")
-		if err != nil {
-			failMessage("Error deploying worker", err)
-			if response := promptUser("Would you like to try again? (y/n): "); strings.ToLower(response) == "n" {
-				return
-			}
-			continue
-		}
-		successMessage("Worker deployed successfully!")
-
-		prompt := fmt.Sprintf("Would you like to open %sBPB panel%s in browser? (y/n): ", blue, reset)
-		if response := promptUser(prompt); strings.ToLower(response) == "n" {
-			return
-		}
-
-		url, err := extractURL(output)
-		if err != nil {
-			failMessage("Error getting URL", err)
-			return
-		}
-
-		if err := openURL(url + "/panel"); err != nil {
-			failMessage("Error opening URL in browser", err)
-			return
-		}
-		break
-	}
+type ProjectDeploymentNewParams struct {
+	AccountID string                `form:"account_id,required"`
+	Branch    string                `form:"branch"`
+	Manifest  string                `form:"manifest"`
+	WorkerJS  *multipart.FileHeader `form:"_worker.js"`
+	Path      string
 }
 
-func runCommand(cmdDir string, command string, args ...string) (string, error) {
-	cmd := exec.Command(command, args...)
-	var stdoutBuf, stderrBuf bytes.Buffer
-	cmd.Stdout = &stdoutBuf
-	cmd.Stderr = &stderrBuf
-	cmd.Dir = cmdDir
-	err := cmd.Run()
-	output := stdoutBuf.String() + stderrBuf.String()
-	if err != nil {
-		return output, err
+func (pdp ProjectDeploymentNewParams) MarshalMultipart() ([]byte, string, error) {
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	manifestHeaders := textproto.MIMEHeader{
+		"Content-Disposition": []string{`form-data; name="manifest"`},
 	}
+	manifestPart, err := writer.CreatePart(manifestHeaders)
+	if err != nil {
+		return nil, "", fmt.Errorf("error creating manifest part: %w", err)
+	}
+	_, err = manifestPart.Write([]byte("{}"))
+	if err != nil {
+		return nil, "", fmt.Errorf("error writing manifest content: %w", err)
+	}
+	branchHeaders := textproto.MIMEHeader{
+		"Content-Disposition": []string{`form-data; name="branch"`},
+	}
+	branchPart, err := writer.CreatePart(branchHeaders)
+	if err != nil {
+		return nil, "", fmt.Errorf("error creating branch part: %w", err)
+	}
+	_, err = branchPart.Write([]byte("main"))
+	if err != nil {
+		return nil, "", fmt.Errorf("error writing branch content: %w", err)
+	}
+	fileHeaders := textproto.MIMEHeader{
+		"Content-Disposition": []string{`form-data; name="_worker.js"; filename="_worker.js"`},
+		"Content-Type":        []string{"application/javascript"},
+	}
+	filePart, err := writer.CreatePart(fileHeaders)
+	if err != nil {
+		return nil, "", fmt.Errorf("error creating file part: %w", err)
+	}
+	file, err := os.Open(pdp.Path)
+	if err != nil {
+		return nil, "", fmt.Errorf("error opening file: %w", err)
+	}
+	defer file.Close()
+	_, err = io.Copy(filePart, file)
+	if err != nil {
+		return nil, "", fmt.Errorf("error copying file content: %w", err)
+	}
+	err = writer.Close()
+	if err != nil {
+		return nil, "", fmt.Errorf("error closing multipart writer: %w", err)
+	}
+	return body.Bytes(), writer.FormDataContentType(), nil
+}
 
-	return output, nil
+func callback(w http.ResponseWriter, r *http.Request) {
+	var err error
+	state := r.URL.Query().Get("state")
+	if state != oauthState {
+		failMessage("Invalid OAuth state", nil)
+		return
+	}
+	code := r.URL.Query().Get("code")
+	if code == "" {
+		failMessage("No code returned", nil)
+		return
+	}
+	token, err := oauthConfig.Exchange(
+		context.Background(),
+		code,
+		oauth2.SetAuthURLParam("code_verifier", codeVerifier),
+	)
+	if err != nil {
+		failMessage("Error exchanging oauthToken", err)
+	}
+	oauthTokenChan <- token
+	w.Write([]byte("Obtained token successfully."))
+}
+
+func deployBPB(ctx context.Context) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	select {
+	case <-ctx.Done():
+		return
+	case token := <-oauthTokenChan:
+		cfClient = cf.NewClient(option.WithAPIToken(token.AccessToken))
+		res, err := cfClient.Accounts.List(ctx, accounts.AccountListParams{})
+		if err != nil {
+			failMessage("Error getting oauthToken", err)
+			return
+		}
+		if len(res.Result) != 0 {
+			cfAccount = &res.Result[0]
+		}
+		installDir, err := os.MkdirTemp("", "bpb-wizard")
+		if err != nil {
+			failMessage("Error creating temp directory", err)
+			return
+		}
+		workerURL := "https://github.com/bia-pain-bache/BPB-Worker-Panel/releases/latest/download/worker.js"
+		workerPath := filepath.Join(installDir, "worker.js")
+		fmt.Printf("\n%s Downloading %sworker.js%s...\n", title, green, reset)
+		for {
+			if err := downloadFile(workerURL, workerPath); err != nil {
+				failMessage("Error downloading worker.js", err)
+				if response := promptUser("Would you like to try again? (y/n): "); strings.ToLower(response) == "n" {
+					return
+				}
+				continue
+			}
+			successMessage("Worker downloaded successfully!")
+			break
+		}
+		var workerName string
+		for {
+			workerName = generateRandomDomain(32)
+			fmt.Printf("\n%s The random generated worker name (%sSubdomain%s) is: %s%s%s\n", info, green, reset, orange, workerName, reset)
+			if response := promptUser("Please enter a custom worker name or press ENTER to use generated one: "); response != "" {
+				if strings.Contains(strings.ToLower(response), "bpb") {
+					message := fmt.Sprintf("Worker name cannot contain %sbpb%s! Please try another name.", red, reset)
+					failMessage(message, nil)
+					continue
+				}
+				workerName = response
+			}
+			if resp := isWorkerAvailable(ctx, workerName); resp {
+				prompt := fmt.Sprintf("This worker already exists! This will %sRESET%s all panel settings, would you like to override it? (y/n): ", red, reset)
+				if response := promptUser(prompt); strings.ToLower(response) == "n" {
+					continue
+				}
+			}
+			break
+		}
+
+		uid := uuid.NewString()
+		fmt.Printf("\n%s The random generated %sUUID%s is: %s%s%s\n", info, green, reset, orange, uid, reset)
+		if response := promptUser("Please enter a custom UUID or press ENTER to use generated one: "); response != "" {
+			uid = response
+		}
+
+		pass := generateTrPassword(12)
+		fmt.Printf("\n%s The random generated %sTrojan password%s is: %s%s%s\n", info, green, reset, orange, pass, reset)
+		if response := promptUser("Please enter a custom Trojan password or press ENTER to use generated one: "); response != "" {
+			pass = response
+		}
+
+		proxyIP := "bpb.yousef.isegaro.com"
+		fmt.Printf("\n%s The default %sProxy IP%s is: %s%s%s\n", info, green, reset, orange, proxyIP, reset)
+		if response := promptUser("Please enter custom Proxy IP/Domains or press ENTER to use default: "); response != "" {
+			proxyIP = response
+		}
+
+		fallback := "speed.cf.com"
+		fmt.Printf("\n%s The default %sFallback domain%s is: %s%s%s\n", info, green, reset, orange, fallback, reset)
+		if response := promptUser("Please enter a custom Fallback domain or press ENTER to use default: "); response != "" {
+			fallback = response
+		}
+
+		subPath := generateSubURIPath(16)
+		fmt.Printf("\n%s The random generated %sSubscription path%s is: %s%s%s\n", info, green, reset, orange, subPath, reset)
+		if response := promptUser("Please enter a custom Subscription path or press ENTER to use generated one: "); response != "" {
+			subPath = response
+		}
+
+		fmt.Printf("\n%s Creating KV namespace...\n", title)
+		var kvNameSpace *kv.Namespace
+		for {
+			now := time.Now().Format("2006-01-02_15-04-05")
+			kvName := fmt.Sprintf("panel-kv-%s", now)
+			kvNameSpace, err = createKVNamespace(ctx, kvName)
+			if err != nil {
+				failMessage("Error creating KV!", err)
+				if response := promptUser("Would you like to try again? (y/n): "); strings.ToLower(response) == "n" {
+					return
+				}
+				continue
+			}
+			break
+		}
+		successMessage("KV created successfully!")
+		var project *pages.Project
+		for {
+			fmt.Printf("\n%s Creating Page...\n", title)
+			project, err = createPage(ctx, workerName, uid, pass, proxyIP, fallback, subPath, kvNameSpace)
+			if err != nil {
+				failMessage("Error deploying page", err)
+				if response := promptUser("Would you like to try again? (y/n): "); strings.ToLower(response) == "n" {
+					return
+				}
+				continue
+			}
+			successMessage("Page created successfully!")
+			break
+		}
+
+		for {
+			fmt.Printf("\n%s Deploying Page...\n", title)
+			_, err = deployPage(ctx, project, workerPath)
+			if err != nil {
+				failMessage("Error deploying page", err)
+				if response := promptUser("Would you like to try again? (y/n): "); strings.ToLower(response) == "n" {
+					return
+				}
+				continue
+			}
+			successMessage("Page deployed successfully!")
+			break
+		}
+		panel := "https://" + project.Subdomain + "/panel"
+		fmt.Printf("\n%s PBP Panel deployed on %s%s%s but %snot ready%s yet. Waiting...\n", title, green, panel, reset, red, reset)
+		done := make(chan struct{})
+		go checkBPBPanel(project.Subdomain, done)
+		<-done
+	}
 }
 
 func promptUser(prompt string) string {
@@ -285,12 +290,38 @@ func promptUser(prompt string) string {
 	return strings.TrimSpace(response)
 }
 
+func checkBPBPanel(url string, done chan<- struct{}) {
+	ticker := time.NewTicker(5 * time.Second)
+	for range ticker.C {
+		resp, err := http.Get(url)
+		if err != nil {
+			fmt.Printf(".")
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			fmt.Printf(".")
+			continue
+		}
+		defer resp.Body.Close()
+		successMessage(fmt.Sprintf("\nBPB panel is ready -> %s", url))
+		prompt := fmt.Sprintf("Would you like to open %sBPB panel%s in browser? (y/n): ", blue, reset)
+		if response := promptUser(prompt); strings.ToLower(response) == "n" {
+			return
+		}
+		if err = openURL(url); err != nil {
+			failMessage("Error opening panel", err)
+			return
+		}
+		done <- struct{}{}
+		return
+	}
+}
+
 func generateRandomString(charSet string, length int, isDomain bool) string {
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	randomBytes := make([]byte, length)
 	for i := range randomBytes {
 		for {
-			char := charSet[r.Intn(len(charSet))]
+			char := charSet[rand.IntN(len(charSet))]
 			if isDomain && (i == 0 || i == length-1) && char == byte('-') {
 				continue
 			}
@@ -300,6 +331,40 @@ func generateRandomString(charSet string, length int, isDomain bool) string {
 	}
 
 	return string(randomBytes)
+}
+
+func generateAuthURL() string {
+	oauthState = generateState()
+	codeVerifier = generateCodeVerifier()
+	codeChallenge := generateCodeChallenge(codeVerifier)
+	return oauthConfig.AuthCodeURL(
+		oauthState,
+		oauth2.AccessTypeOffline,
+		oauth2.SetAuthURLParam("code_challenge", codeChallenge),
+		oauth2.SetAuthURLParam("code_challenge_method", "S256"),
+	)
+}
+
+func generateState() string {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	buff := make([]byte, 16)
+	for i := range buff {
+		buff[i] = charset[rand.Int64()%int64(len(charset))]
+	}
+	return base64.URLEncoding.EncodeToString(buff)
+}
+
+func generateCodeVerifier() string {
+	b := make([]byte, 32)
+	for i := range b {
+		b[i] = byte(rand.IntN(256))
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func generateCodeChallenge(verifier string) string {
+	hash := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(hash[:])
 }
 
 func generateRandomDomain(subDomainLength int) string {
@@ -317,79 +382,81 @@ func generateSubURIPath(uriLength int) string {
 	return generateRandomString(charset, uriLength, false)
 }
 
-func isWorkerAvailable(installDir string, workerName string) bool {
-	if _, err := runCommand(installDir, "npx", "wrangler", "deployments", "list", "--name", workerName); err == nil {
+func isWorkerAvailable(ctx context.Context, workerName string) bool {
+	_, err := cfClient.Workers.Scripts.Deployments.Get(ctx, workerName, workers.ScriptDeploymentGetParams{AccountID: cf.F(cfAccount.ID)})
+	if err == nil {
 		return true
 	}
-
 	return false
 }
 
-func extractURL(output string) (string, error) {
-	url, err := findMatch(`https?://[^\s]+`, output)
+func createKVNamespace(ctx context.Context, ns string) (*kv.Namespace, error) {
+	res, err := cfClient.KV.Namespaces.New(ctx, kv.NamespaceNewParams{AccountID: cf.F(cfAccount.ID), Title: cf.F(ns)})
 	if err != nil {
-		return "", fmt.Errorf("failed to get panel URL: %v", err)
+		return nil, err
 	}
-
-	return url, nil
+	return res, nil
 }
 
-func buildWranglerConfig(filePath string, workerPath string) error {
-	config := WranglerConfig{
-		Name:                workerName,
-		Main:                "./worker.js",
-		Compatibility_date:  time.Now().AddDate(0, 0, -1).Format("2006-01-02"),
-		Compatibility_flags: []string{"nodejs_compat"},
-		Workers_dev:         true,
-		Kv_namespaces: []KVNamespaceBinding{
-			{Binding: "kv", Id: kvID},
-		},
-		Vars: workerSettings{
-			Uuid:     UUID,
-			TrPass:   TR_PASS,
-			ProxyIP:  PROXY_IP,
-			Fallback: FALLBACK,
-			SubPath:  SUB_PATH,
-		},
-	}
-
-	jsonData, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return fmt.Errorf("error marshaling config to JSON: %v", err)
-	}
-
-	if err = os.WriteFile(filePath, jsonData, 0644); err != nil {
-		return fmt.Errorf("error writing JSON to file: %v", err)
-	}
-
-	return nil
+func createPage(ctx context.Context, name string, uid string, pass string, proxy string, fallback string, sub string, kv *kv.Namespace) (*pages.Project, error) {
+	return cfClient.Pages.Projects.New(
+		ctx,
+		pages.ProjectNewParams{
+			AccountID: cf.F(cfAccount.ID),
+			Project: pages.ProjectParam{
+				Name:             cf.F(name),
+				ProductionBranch: cf.F("main"),
+				DeploymentConfigs: cf.F(pages.ProjectDeploymentConfigsParam{
+					Production: cf.F(pages.ProjectDeploymentConfigsProductionParam{
+						CompatibilityDate:  cf.F(time.Now().AddDate(0, 0, -1).Format("2006-01-02")),
+						CompatibilityFlags: cf.F([]string{"nodejs_compat"}),
+						KVNamespaces: cf.F(map[string]pages.ProjectDeploymentConfigsProductionKVNamespaceParam{
+							"kv": {
+								NamespaceID: cf.F(kv.ID),
+							},
+						}),
+						Services: cf.F(map[string]pages.ProjectDeploymentConfigsProductionServiceParam{}),
+						EnvVars: cf.F(map[string]pages.ProjectDeploymentConfigsProductionEnvVarsUnionParam{
+							"UUID": pages.ProjectDeploymentConfigsProductionEnvVarsPagesPlainTextEnvVarParam{
+								Type:  cf.F(pages.ProjectDeploymentConfigsProductionEnvVarsPagesPlainTextEnvVarTypePlainText),
+								Value: cf.F(uid),
+							},
+							"TR_PASS": pages.ProjectDeploymentConfigsProductionEnvVarsPagesPlainTextEnvVarParam{
+								Type:  cf.F(pages.ProjectDeploymentConfigsProductionEnvVarsPagesPlainTextEnvVarTypePlainText),
+								Value: cf.F(pass),
+							},
+							"PROXY_IP": pages.ProjectDeploymentConfigsProductionEnvVarsPagesPlainTextEnvVarParam{
+								Type:  cf.F(pages.ProjectDeploymentConfigsProductionEnvVarsPagesPlainTextEnvVarTypePlainText),
+								Value: cf.F(proxy),
+							},
+							"FALLBACK": pages.ProjectDeploymentConfigsProductionEnvVarsPagesPlainTextEnvVarParam{
+								Type:  cf.F(pages.ProjectDeploymentConfigsProductionEnvVarsPagesPlainTextEnvVarTypePlainText),
+								Value: cf.F(fallback),
+							},
+							"SUB_PATH": pages.ProjectDeploymentConfigsProductionEnvVarsPagesPlainTextEnvVarParam{
+								Type:  cf.F(pages.ProjectDeploymentConfigsProductionEnvVarsPagesPlainTextEnvVarTypePlainText),
+								Value: cf.F(sub),
+							},
+						}),
+					}),
+				}),
+			},
+		})
 }
 
-func findMatch(pattern string, input string) (string, error) {
-	re, err := regexp.Compile(pattern)
+func deployPage(ctx context.Context, project *pages.Project, assetsPath string) (*pages.Deployment, error) {
+	param := ProjectDeploymentNewParams{AccountID: cfAccount.ID, Branch: "main", Manifest: "{}", WorkerJS: &multipart.FileHeader{Filename: "worker.js"}, Path: assetsPath}
+	data, ct, err := param.MarshalMultipart()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-
-	match := re.FindString(input)
-	if match == "" {
-		return "", fmt.Errorf("no match found")
-	}
-	return match, nil
-}
-
-func extractKvID(output string) (string, error) {
-	jsonPart, err := findMatch(`\{[^{}]*\}`, output)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse KV object: %v", err)
-	}
-
-	var object KVNamespace
-	if err := json.Unmarshal([]byte(jsonPart), &object); err != nil {
-		return "", fmt.Errorf("failed to unmarshal JSON: %v", err)
-	}
-
-	return object.ID, nil
+	r := bytes.NewBuffer(data)
+	return cfClient.Pages.Projects.Deployments.New(
+		ctx,
+		project.Name,
+		pages.ProjectDeploymentNewParams{AccountID: cf.F(cfAccount.ID)},
+		option.WithRequestBody(ct, r),
+	)
 }
 
 func downloadFile(url, dest string) error {
@@ -416,52 +483,21 @@ func downloadFile(url, dest string) error {
 	return nil
 }
 
-func unzip(src string, dest string) error {
-	r, err := zip.OpenReader(src)
-	if err != nil {
-		return err
-	}
-	defer r.Close()
-
-	for _, f := range r.File {
-		fPath := filepath.Join(dest, f.Name)
-		if !strings.HasPrefix(fPath, filepath.Clean(dest)+string(os.PathSeparator)) {
-			return fmt.Errorf("illegal file path: %s", fPath)
-		}
-
-		if f.FileInfo().IsDir() {
-			os.MkdirAll(fPath, os.ModePerm)
-			continue
-		}
-
-		if err := os.MkdirAll(filepath.Dir(fPath), os.ModePerm); err != nil {
-			return err
-		}
-
-		outFile, err := os.OpenFile(fPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
-		if err != nil {
-			return err
-		}
-
-		rc, err := f.Open()
-		if err != nil {
-			return err
-		}
-
-		_, err = io.Copy(outFile, rc)
-		outFile.Close()
-		rc.Close()
-
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func openURL(url string) error {
-	var cmd *exec.Cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
-	return cmd.Start()
+	var cmd string
+	var args = []string{url}
+	switch runtime.GOOS {
+	case "darwin": // MacOS
+		cmd = "open"
+		args = []string{url}
+	case "windows": // Windows
+		cmd = "rundll32"
+		args = []string{"url.dll,FileProtocolHandler", url}
+	default: // Linux, BSD, etc.
+		cmd = "xdg-open"
+		args = []string{url}
+	}
+	return exec.Command(cmd, args...).Start()
 }
 
 func failMessage(message string, err error) {
@@ -476,4 +512,20 @@ func failMessage(message string, err error) {
 func successMessage(message string) {
 	succMark := bold + green + "✓" + reset
 	fmt.Printf("%s %s\n", succMark, message)
+}
+
+func main() {
+	ctx := context.Background()
+	go func() {
+		url := generateAuthURL()
+		if err := openURL(url); err != nil {
+			failMessage("Error opening URL", err)
+		}
+	}()
+	go deployBPB(ctx)
+	http.HandleFunc("/oauth/callback", callback)
+	err := http.ListenAndServe(":8976", nil)
+	if err != nil {
+		failMessage("Error starting server", err)
+	}
 }
