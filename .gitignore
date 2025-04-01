@@ -3,6 +3,8 @@
 !go.mod
 !go.sum
 !BPB-Wizard.go
+!oauth.go
+!pages.go
 !.github/
 !.github/**
 !*.syso
