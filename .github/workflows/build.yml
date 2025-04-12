@@ -1,66 +1,24 @@
 name: Build BPB-Wizard
 
-env:
-  RELEASE_VERSION: v1.3
-
-permissions:
-  contents: write
-
 on:
-  workflow_dispatch:
+  push:
+  pull_request:
+    branches: [main]
 
 jobs:
   build:
-    runs-on: windows-latest
-
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+    name: Build
+    runs-on: ${{ matrix.os }}
     steps:
-      - name: Checkout repository
+      - name: Check out code
         uses: actions/checkout@v4
-
-      - name: Install Golang
+      - name: Setup Go
+        id: go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24.1"
-
-      - name: Setup Node.js standalone
-        run: |
-          New-Item -ItemType Directory -Path ".\bundles"
-          Invoke-WebRequest -Uri "https://nodejs.org/dist/v22.14.0/node-v22.14.0-win-x64.zip" -OutFile "bundles\node-v22.14.0-win-x64.zip"
-          Expand-Archive -Path bundles\node-v22.14.0-win-x64.zip -DestinationPath .
-          echo "${{ github.workspace }}\node-v22.14.0-win-x64" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
-
-      - name: Install Wrangler
-        run: |
-          mkdir wrangler
-          cd wrangler
-          npm install wrangler --save-dev
-          Compress-Archive -Path .\* -DestinationPath ..\bundles\wrangler.zip
-
-      - name: Build for all Windows architectures
-        run: .\build.ps1
-
-      - name: Upload built executables to artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: BPB-Wizard
-          path: bin/*
-
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ env.RELEASE_VERSION }}
-          release_name: Release ${{ env.RELEASE_VERSION }}
-          draft: false
-          prerelease: true
-
-      - name: Upload Release Assets
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: bin/*
-          tag: ${{ env.RELEASE_VERSION }}
-          overwrite: true
-          file_glob: true
+          go-version: ^1.24
+      - name: Build
+        run: make build

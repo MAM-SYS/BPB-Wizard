@@ -3,10 +3,7 @@
 !go.mod
 !go.sum
 !BPB-Wizard.go
-!oauth.go
-!pages.go
 !.github/
 !.github/**
-!*.syso
 !icon.ico
-!build.ps1
+!Makefile
