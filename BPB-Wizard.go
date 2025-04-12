@@ -487,10 +487,10 @@ func openURL(url string) error {
 	var cmd string
 	var args = []string{url}
 	switch runtime.GOOS {
-	case "darwin": // MacOS
+	case "darwin":
 		cmd = "open"
 		args = []string{url}
-	case "windows": // Windows
+	case "windows":
 		cmd = "rundll32"
 		args = []string{"url.dll,FileProtocolHandler", url}
 	default: // Linux, BSD, etc.
