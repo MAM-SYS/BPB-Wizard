@@ -136,6 +136,61 @@ func createPageDeployment(ctx context.Context, project *pages.Project, jsPath st
 	)
 }
 
+func addPagesCustomDomain(ctx context.Context, projectName string, customDomain string) (string, error) {
+	// extractor, err := tldextract.New("/tmp/tld.cache", false)
+	// if err != nil {
+	// 	panic(err)
+	// }
+
+	// result := extractor.Extract(customDomain)
+	// domain := fmt.Sprintf("%s.%s", result.Root, result.Tld)
+
+	// zones, err := cfClient.Zones.List(ctx, zones.ZoneListParams{
+	// 	Account: cf.F(zones.ZoneListParamsAccount{
+	// 		ID: cf.F(cfAccount.ID),
+	// 	}),
+	// 	Match: cf.F(zones.ZoneListParamsMatch("contains")),
+	// 	Name:  cf.F(domain),
+	// })
+
+	// if err != nil {
+	// 	return "", err
+	// }
+
+	// if len(zones.Result) == 0 {
+	// 	message := fmt.Sprintf("Could not find this domain in your account: %s", domain)
+	// 	return "", fmt.Errorf(message, nil)
+	// }
+
+	// zone := zones.Result[0]
+	// pagesHost := fmt.Sprintf("%s.pages.dev", projectName)
+
+	// _, er := cfClient.DNS.Records.New(ctx, dns.RecordNewParams{
+	// 	ZoneID: cf.F(zone.ID),
+	// 	Record: dns.CNAMERecordParam{
+	// 		Content: cf.F(pagesHost),
+	// 		Name:    cf.F(customDomain),
+	// 		Proxied: cf.F(true),
+	// 		Type:    cf.F(dns.CNAMERecordType("CNAME")),
+	// 	},
+	// }, cfClient.Options...)
+
+	// if er != nil {
+	// 	return "", er
+	// }
+
+	_, e := cfClient.Pages.Projects.Domains.New(ctx, projectName, pages.ProjectDomainNewParams{
+		AccountID: cf.F(cfAccount.ID),
+		Name:      cf.F(customDomain),
+	})
+
+	if e != nil {
+		return "", e
+	}
+
+	return customDomain, nil
+}
+
 func isPageAvailable(ctx context.Context, projectName string) bool {
 	if _, err := cfClient.Pages.Projects.Get(ctx, projectName, pages.ProjectGetParams{AccountID: cf.F(cfAccount.ID)}); err != nil {
 		return true
@@ -144,7 +199,7 @@ func isPageAvailable(ctx context.Context, projectName string) bool {
 	return false
 }
 
-func deployBPBPage(ctx context.Context, name string, uid string, pass string, proxy string, fallback string, sub string, jsPath string, kvNamespace *kv.Namespace) string {
+func deployBPBPage(ctx context.Context, name string, uid string, pass string, proxy string, fallback string, sub string, jsPath string, kvNamespace *kv.Namespace, customDomain string) string {
 	var project *pages.Project
 	var err error
 	for {
@@ -173,6 +228,22 @@ func deployBPBPage(ctx context.Context, name string, uid string, pass string, pr
 		}
 		successMessage("Page deployed successfully! It takes about 5 minutes to open panel, please wait...")
 		break
+	}
+
+	if customDomain != "" {
+		for {
+			var err error
+			_, err = addPagesCustomDomain(ctx, name, customDomain)
+			if err != nil {
+				failMessage("Error adding custom domain.", err)
+				if response := promptUser("Would you like to try again? (y/n): "); strings.ToLower(response) == "n" {
+					return ""
+				}
+				continue
+			}
+			successMessage("Custom domain added to pages successfully!")
+			return "https://" + customDomain + "/panel"
+		}
 	}
 
 	return "https://" + project.Subdomain + "/panel"

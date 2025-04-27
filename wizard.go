@@ -185,6 +185,7 @@ func checkBPBPanel(url string) {
 		resp.Body.Close()
 		message := fmt.Sprintf("BPB panel is ready -> %s", url)
 		successMessage(message)
+		fmt.Print("\n")
 		prompt := fmt.Sprintf("Would you like to open %sBPB panel%s in browser? (y/n): ", blue, reset)
 		if response := promptUser(prompt); strings.ToLower(response) == "n" {
 			return
@@ -300,11 +301,11 @@ func configureBPB() {
 		subPath = response
 	}
 
-	// var customDomain string
-	// fmt.Printf("\n%s You can set %sCustom domain%s ONLY if you registered domain on this cloudflare account.\n", info, green, reset)
-	// if response := promptUser("Please enter a custom domain (if you have any) or press ENTER to ignore: "); response != "" {
-	// 	customDomain = response
-	// }
+	var customDomain string
+	fmt.Printf("\n%s You can set %sCustom domain%s ONLY if you registered domain on this cloudflare account.\n", info, green, reset)
+	if response := promptUser("Please enter a custom domain (if you have any) or press ENTER to ignore: "); response != "" {
+		customDomain = response
+	}
 
 	fmt.Printf("\n%s Downloading %sworker.js%s...\n", title, green, reset)
 	workerPath := filepath.Join(srsPath, "worker.js")
@@ -342,15 +343,10 @@ func configureBPB() {
 	var panel string
 	switch deployType {
 	case DTWorker:
-		panel = deployBPBWorker(ctx, projectName, uid, trPass, proxyIP, fallback, subPath, workerPath, kvNamespace)
+		panel = deployBPBWorker(ctx, projectName, uid, trPass, proxyIP, fallback, subPath, workerPath, kvNamespace, customDomain)
 	case DTPage:
-		panel = deployBPBPage(ctx, projectName, uid, trPass, proxyIP, fallback, subPath, workerPath, kvNamespace)
+		panel = deployBPBPage(ctx, projectName, uid, trPass, proxyIP, fallback, subPath, workerPath, kvNamespace, customDomain)
 	}
-
-	// prompt := fmt.Sprintf("Would you like to open %sBPB panel%s in browser? (y/n): ", blue, reset)
-	// if response := promptUser(prompt); strings.ToLower(response) == "n" {
-	// 	return
-	// }
 
 	checkBPBPanel(panel)
 	if err = openURL(panel); err != nil {

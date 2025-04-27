@@ -16,6 +16,8 @@ import (
 	"github.com/cloudflare/cloudflare-go/v4/kv"
 	"github.com/cloudflare/cloudflare-go/v4/option"
 	"github.com/cloudflare/cloudflare-go/v4/workers"
+	"github.com/cloudflare/cloudflare-go/v4/zones"
+	"github.com/joeguo/tldextract"
 )
 
 type ScriptUpdateParams struct {
@@ -217,21 +219,49 @@ func enableWorkerSubdomain(ctx context.Context, name string) (*workers.ScriptSub
 		})
 }
 
-// func updateWorkerSubDomain(ctx context.Context, domain string) (string, error) {
-// 	res, err := cfClient.Workers.Subdomains.Update(ctx, workers.SubdomainUpdateParams{AccountID: cf.F(cfAccount.ID), Subdomain: cf.F(domain)})
-// 	if err != nil {
-// 		return "", err
-// 	}
+func addCustomDomain(ctx context.Context, script string, customDomain string) (string, error) {
+	extractor, err := tldextract.New("/tmp/tld.cache", false)
+	if err != nil {
+		panic(err)
+	}
 
-// 	return res.Subdomain, nil
-// }
+	result := extractor.Extract(customDomain)
+	domain := fmt.Sprintf("%s.%s", result.Root, result.Tld)
+
+	zones, err := cfClient.Zones.List(ctx, zones.ZoneListParams{
+		Account: cf.F(zones.ZoneListParamsAccount{
+			ID: cf.F(cfAccount.ID),
+		}),
+		Match: cf.F(zones.ZoneListParamsMatch("contains")),
+		Name:  cf.F(domain),
+	})
+
+	if err != nil {
+		return "", err
+	}
+
+	zone := zones.Result[0]
+	_, er := cfClient.Workers.Domains.Update(ctx, workers.DomainUpdateParams{
+		AccountID:   cf.F(cfAccount.ID),
+		Environment: cf.F("production"),
+		Hostname:    cf.F(customDomain),
+		Service:     cf.F(script),
+		ZoneID:      cf.F(zone.ID),
+	})
+
+	if er != nil {
+		return "", er
+	}
+
+	return domain, nil
+}
 
 func isWorkerAvailable(ctx context.Context, name string) bool {
 	_, err := cfClient.Workers.Scripts.Get(ctx, name, workers.ScriptGetParams{AccountID: cf.F(cfAccount.ID)})
 	return err != nil
 }
 
-func deployBPBWorker(ctx context.Context, name string, uid string, pass string, proxy string, fallback string, sub string, jsPath string, kvNamespace *kv.Namespace) string {
+func deployBPBWorker(ctx context.Context, name string, uid string, pass string, proxy string, fallback string, sub string, jsPath string, kvNamespace *kv.Namespace, customDomain string) string {
 	for {
 		fmt.Printf("\n%s Creating Worker...\n", title)
 		_, err := createWorker(ctx, name, uid, pass, proxy, fallback, sub, jsPath, kvNamespace)
@@ -259,24 +289,25 @@ func deployBPBWorker(ctx context.Context, name string, uid string, pass string, 
 		break
 	}
 
-	// for {
-	// 	var err error
-	// 	_, err = updateWorkerSubDomain(ctx, domain)
-	// 	if err != nil {
-	// 		failMessage("Error updating worker subdomain", err)
-	// 		if response := promptUser("Would you like to try again? (y/n): "); strings.ToLower(response) == "n" {
-	// 			return ""
-	// 		}
-	// 		continue
-	// 	}
-	// 	successMessage("Worker subdomain customized successfully!")
-	// 	break
-	// }
+	if customDomain != "" {
+		for {
+			var err error
+			_, err = addCustomDomain(ctx, name, customDomain)
+			if err != nil {
+				failMessage("Error adding custom domain.", err)
+				if response := promptUser("Would you like to try again? (y/n): "); strings.ToLower(response) == "n" {
+					return ""
+				}
+				continue
+			}
+			successMessage("Custom domain added to worker successfully!")
+			return "https://" + customDomain + "/panel"
+		}
+	}
 
 	resp, err := cfClient.Workers.Subdomains.Get(ctx, workers.SubdomainGetParams{AccountID: cf.F(cfAccount.ID)})
 	if err != nil {
 		failMessage("Error getting worker subdomain", err)
-
 		return ""
 	}
 
