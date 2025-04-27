@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/textproto"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -54,6 +55,7 @@ func (sp ScriptUpdateParams) MarshalMultipart() ([]byte, string, error) {
 		"tail_consumers":      sp.Metadata.TailConsumers,
 		"logpush":             sp.Metadata.Logpush,
 	}
+
 	metadataJSON, err := json.Marshal(metadata)
 	if err != nil {
 		return nil, "", fmt.Errorf("error marshalling metadata: %w", err)
@@ -62,6 +64,7 @@ func (sp ScriptUpdateParams) MarshalMultipart() ([]byte, string, error) {
 	metadataHeaders := textproto.MIMEHeader{
 		"Content-Disposition": []string{`form-data; name="metadata"`},
 	}
+
 	metadataPart, err := writer.CreatePart(metadataHeaders)
 	if err != nil {
 		return nil, "", fmt.Errorf("error creating metadata part: %w", err)
@@ -76,6 +79,7 @@ func (sp ScriptUpdateParams) MarshalMultipart() ([]byte, string, error) {
 		"Content-Disposition": []string{`form-data; name="package-lock.json"; filename="package-lock.json"`},
 		"Content-Type":        []string{"text/plain"},
 	}
+
 	packageLockPart, err := writer.CreatePart(packageLockHeaders)
 	if err != nil {
 		return nil, "", fmt.Errorf("error creating package-lock.json part: %w", err)
@@ -90,6 +94,7 @@ func (sp ScriptUpdateParams) MarshalMultipart() ([]byte, string, error) {
 		"Content-Disposition": []string{`form-data; name="package.json"; filename="package.json"`},
 		"Content-Type":        []string{"text/plain"},
 	}
+
 	packageJSONPart, err := writer.CreatePart(packageJSONHeaders)
 	if err != nil {
 		return nil, "", fmt.Errorf("error creating package.json part: %w", err)
@@ -104,6 +109,7 @@ func (sp ScriptUpdateParams) MarshalMultipart() ([]byte, string, error) {
 		"Content-Disposition": []string{`form-data; name="worker.js"; filename="worker.js"`},
 		"Content-Type":        []string{"application/javascript+module"},
 	}
+
 	filePart, err := writer.CreatePart(fileHeaders)
 	if err != nil {
 		return nil, "", fmt.Errorf("error creating file part: %w", err)
@@ -113,8 +119,8 @@ func (sp ScriptUpdateParams) MarshalMultipart() ([]byte, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("error opening file: %w", err)
 	}
-
 	defer file.Close()
+
 	_, err = io.Copy(filePart, file)
 	if err != nil {
 		return nil, "", fmt.Errorf("error copying file content: %w", err)
@@ -219,8 +225,9 @@ func enableWorkerSubdomain(ctx context.Context, name string) (*workers.ScriptSub
 		})
 }
 
-func addCustomDomain(ctx context.Context, script string, customDomain string) (string, error) {
-	extractor, err := tldextract.New("/tmp/tld.cache", false)
+func addCustomDomain(ctx context.Context, script string, customDomain string, srcPath string) (string, error) {
+	cacheFile := filepath.Join(srcPath, "tld.cache")
+	extractor, err := tldextract.New(cacheFile, false)
 	if err != nil {
 		panic(err)
 	}
@@ -261,9 +268,10 @@ func isWorkerAvailable(ctx context.Context, name string) bool {
 	return err != nil
 }
 
-func deployBPBWorker(ctx context.Context, name string, uid string, pass string, proxy string, fallback string, sub string, jsPath string, kvNamespace *kv.Namespace, customDomain string) string {
+func deployBPBWorker(ctx context.Context, name string, uid string, pass string, proxy string, fallback string, sub string, jsPath string, kvNamespace *kv.Namespace, customDomain string, srcPath string) string {
 	for {
 		fmt.Printf("\n%s Creating Worker...\n", title)
+
 		_, err := createWorker(ctx, name, uid, pass, proxy, fallback, sub, jsPath, kvNamespace)
 		if err != nil {
 			failMessage("Error deploying worker", err)
@@ -272,6 +280,7 @@ func deployBPBWorker(ctx context.Context, name string, uid string, pass string, 
 			}
 			continue
 		}
+
 		successMessage("Worker created successfully!")
 		break
 	}
@@ -285,6 +294,7 @@ func deployBPBWorker(ctx context.Context, name string, uid string, pass string, 
 			}
 			continue
 		}
+
 		successMessage("Worker subdomain enabled successfully!")
 		break
 	}
@@ -292,7 +302,8 @@ func deployBPBWorker(ctx context.Context, name string, uid string, pass string, 
 	if customDomain != "" {
 		for {
 			var err error
-			_, err = addCustomDomain(ctx, name, customDomain)
+
+			_, err = addCustomDomain(ctx, name, customDomain, srcPath)
 			if err != nil {
 				failMessage("Error adding custom domain.", err)
 				if response := promptUser("Would you like to try again? (y/n): "); strings.ToLower(response) == "n" {
@@ -300,6 +311,7 @@ func deployBPBWorker(ctx context.Context, name string, uid string, pass string, 
 				}
 				continue
 			}
+
 			successMessage("Custom domain added to worker successfully!")
 			return "https://" + customDomain + "/panel"
 		}

@@ -66,6 +66,7 @@ func generateAuthURL() string {
 func generateState() string {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	buff := make([]byte, 16)
+
 	for i := range buff {
 		buff[i] = charset[rand.Int64()%int64(len(charset))]
 	}
@@ -75,6 +76,7 @@ func generateState() string {
 
 func generateCodeVerifier() string {
 	b := make([]byte, 32)
+
 	for i := range b {
 		b[i] = byte(rand.IntN(256))
 	}
@@ -84,13 +86,13 @@ func generateCodeVerifier() string {
 
 func generateCodeChallenge(verifier string) string {
 	hash := sha256.Sum256([]byte(verifier))
-
 	return base64.RawURLEncoding.EncodeToString(hash[:])
 }
 
 func login() error {
 	url := generateAuthURL()
 	fmt.Printf("\n%s Login %sCloudflare%s...\n", title, orange, reset)
+
 	if err := openURL(url); err != nil {
 		return err
 	}
@@ -103,14 +105,12 @@ func callback(w http.ResponseWriter, r *http.Request) {
 	param := r.URL.Query().Get("state")
 	if param != state {
 		failMessage("Invalid OAuth state", nil)
-
 		return
 	}
 
 	code := r.URL.Query().Get("code")
 	if code == "" {
 		failMessage("No code returned", nil)
-
 		return
 	}
 

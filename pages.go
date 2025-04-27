@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/textproto"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/cloudflare/cloudflare-go/v4/kv"
 	"github.com/cloudflare/cloudflare-go/v4/option"
 	"github.com/cloudflare/cloudflare-go/v4/pages"
+	"github.com/joeguo/tldextract"
 )
 
 type projectDeploymentNewParams struct {
@@ -31,46 +33,57 @@ func (pdp projectDeploymentNewParams) MarshalMultipart() ([]byte, string, error)
 	manifestHeaders := textproto.MIMEHeader{
 		"Content-Disposition": []string{`form-data; name="manifest"`},
 	}
+
 	manifestPart, err := writer.CreatePart(manifestHeaders)
 	if err != nil {
 		return nil, "", fmt.Errorf("error creating manifest part: %w", err)
 	}
+
 	_, err = manifestPart.Write([]byte("{}"))
 	if err != nil {
 		return nil, "", fmt.Errorf("error writing manifest content: %w", err)
 	}
+
 	branchHeaders := textproto.MIMEHeader{
 		"Content-Disposition": []string{`form-data; name="branch"`},
 	}
+
 	branchPart, err := writer.CreatePart(branchHeaders)
 	if err != nil {
 		return nil, "", fmt.Errorf("error creating branch part: %w", err)
 	}
+
 	_, err = branchPart.Write([]byte("main"))
 	if err != nil {
 		return nil, "", fmt.Errorf("error writing branch content: %w", err)
 	}
+
 	fileHeaders := textproto.MIMEHeader{
 		"Content-Disposition": []string{`form-data; name="_worker.js"; filename="_worker.js"`},
 		"Content-Type":        []string{"application/javascript"},
 	}
+
 	filePart, err := writer.CreatePart(fileHeaders)
 	if err != nil {
 		return nil, "", fmt.Errorf("error creating file part: %w", err)
 	}
+
 	file, err := os.Open(pdp.jsPath)
 	if err != nil {
 		return nil, "", fmt.Errorf("error opening file: %w", err)
 	}
 	defer file.Close()
+
 	_, err = io.Copy(filePart, file)
 	if err != nil {
 		return nil, "", fmt.Errorf("error copying file content: %w", err)
 	}
+
 	err = writer.Close()
 	if err != nil {
 		return nil, "", fmt.Errorf("error closing multipart writer: %w", err)
 	}
+
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
 
@@ -136,13 +149,14 @@ func createPageDeployment(ctx context.Context, project *pages.Project, jsPath st
 	)
 }
 
-func addPagesCustomDomain(ctx context.Context, projectName string, customDomain string) (string, error) {
-	// extractor, err := tldextract.New("/tmp/tld.cache", false)
-	// if err != nil {
-	// 	panic(err)
-	// }
+func addPagesCustomDomain(ctx context.Context, projectName string, customDomain string, srcPath string) (string, error) {
+	cacheFile := filepath.Join(srcPath, "tld.cache")
+	extractor, err := tldextract.New(cacheFile, false)
+	if err != nil {
+		panic(err)
+	}
 
-	// result := extractor.Extract(customDomain)
+	result := extractor.Extract(customDomain)
 	// domain := fmt.Sprintf("%s.%s", result.Root, result.Tld)
 
 	// zones, err := cfClient.Zones.List(ctx, zones.ZoneListParams{
@@ -188,7 +202,7 @@ func addPagesCustomDomain(ctx context.Context, projectName string, customDomain 
 		return "", e
 	}
 
-	return customDomain, nil
+	return result.Sub, nil
 }
 
 func isPageAvailable(ctx context.Context, projectName string) bool {
@@ -199,11 +213,13 @@ func isPageAvailable(ctx context.Context, projectName string) bool {
 	return false
 }
 
-func deployBPBPage(ctx context.Context, name string, uid string, pass string, proxy string, fallback string, sub string, jsPath string, kvNamespace *kv.Namespace, customDomain string) string {
+func deployBPBPage(ctx context.Context, name string, uid string, pass string, proxy string, fallback string, sub string, jsPath string, kvNamespace *kv.Namespace, customDomain string, srcPath string) string {
 	var project *pages.Project
 	var err error
+
 	for {
 		fmt.Printf("\n%s Creating Page...\n", title)
+
 		project, err = createPage(ctx, name, uid, pass, proxy, fallback, sub, kvNamespace)
 		if err != nil {
 			failMessage("Error deploying page", err)
@@ -212,12 +228,14 @@ func deployBPBPage(ctx context.Context, name string, uid string, pass string, pr
 			}
 			continue
 		}
+
 		successMessage("Page created successfully!")
 		break
 	}
 
 	for {
 		fmt.Printf("\n%s Deploying Page...\n", title)
+
 		_, err = createPageDeployment(ctx, project, jsPath)
 		if err != nil {
 			failMessage("Error deploying page", err)
@@ -226,14 +244,14 @@ func deployBPBPage(ctx context.Context, name string, uid string, pass string, pr
 			}
 			continue
 		}
-		successMessage("Page deployed successfully! It takes about 5 minutes to open panel, please wait...")
+
+		successMessage("Page deployed successfully!")
 		break
 	}
 
 	if customDomain != "" {
 		for {
-			var err error
-			_, err = addPagesCustomDomain(ctx, name, customDomain)
+			recordName, err := addPagesCustomDomain(ctx, name, customDomain, srcPath)
 			if err != nil {
 				failMessage("Error adding custom domain.", err)
 				if response := promptUser("Would you like to try again? (y/n): "); strings.ToLower(response) == "n" {
@@ -241,10 +259,14 @@ func deployBPBPage(ctx context.Context, name string, uid string, pass string, pr
 				}
 				continue
 			}
+
 			successMessage("Custom domain added to pages successfully!")
+			// recordName := strings.Split(customDomain, ".")[0]
+			fmt.Printf("%s %sWarning%s: You should create a CNAME record with Name: %s%s%s and Target: %s%s.pages.dev%s, Otherwise your Custom Domain will not work.\n", info, red, reset, green, recordName, reset, green, name, reset)
 			return "https://" + customDomain + "/panel"
 		}
 	}
 
+	successMessage("It takes up to 5 minutes to open panel, please wait...")
 	return "https://" + project.Subdomain + "/panel"
 }

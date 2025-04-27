@@ -60,6 +60,7 @@ func downloadFile(url, dest string) error {
 		return fmt.Errorf("error making GET request: %v", err)
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("failed to download file: %s (HTTP %d)", url, resp.StatusCode)
 	}
@@ -69,6 +70,7 @@ func downloadFile(url, dest string) error {
 		return fmt.Errorf("error creating file: %v", err)
 	}
 	defer out.Close()
+
 	if _, err = io.Copy(out, resp.Body); err != nil {
 		return fmt.Errorf("error writing to file: %v", err)
 	}
@@ -79,6 +81,7 @@ func downloadFile(url, dest string) error {
 func openURL(url string) error {
 	var cmd string
 	var args = []string{url}
+
 	switch runtime.GOOS {
 	case "darwin": // MacOS
 		cmd = "open"
@@ -97,6 +100,7 @@ func openURL(url string) error {
 func generateRandomString(charSet string, length int, isDomain bool) string {
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	randomBytes := make([]byte, length)
+
 	for i := range randomBytes {
 		for {
 			char := charSet[r.Intn(len(charSet))]
@@ -131,6 +135,7 @@ func failMessage(message string, err error) {
 	if err != nil {
 		message += ": " + err.Error()
 	}
+
 	fmt.Printf("%s %s\n", errMark, message)
 }
 
@@ -142,6 +147,7 @@ func successMessage(message string) {
 func checkBPBPanel(url string) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
+
 	dialer := &net.Dialer{
 		Resolver: &net.Resolver{
 			PreferGo: true,
@@ -187,13 +193,13 @@ func checkBPBPanel(url string) {
 		successMessage(message)
 		fmt.Print("\n")
 		prompt := fmt.Sprintf("Would you like to open %sBPB panel%s in browser? (y/n): ", blue, reset)
+
 		if response := promptUser(prompt); strings.ToLower(response) == "n" {
 			return
 		}
 
 		if err = openURL(url); err != nil {
 			failMessage("Error opening panel", err)
-
 			return
 		}
 
@@ -206,23 +212,25 @@ func configureBPB() {
 	ctx := context.Background()
 	cfClient = NewClient(token)
 	var err error
+
 	cfAccount, err = getAccount(ctx)
 	if err != nil {
 		failMessage("Error getting account", err)
 	}
+
 	srsPath, err := os.MkdirTemp("", ".bpb-wizard")
 	workerURL := "https://github.com/bia-pain-bache/BPB-Worker-Panel/releases/latest/download/worker.js"
 	if err != nil {
 		failMessage("Error creating temp directory", err)
-
 		return
 	}
 
 	fmt.Printf("\n%s Get settings...\n", title)
 	fmt.Printf("\n%s You can use %sWorkers%s or %sPages%s to deploy.\n", info, green, reset, green, reset)
-	fmt.Printf("%s %sWarning%s: If you choose %sPages%s, you can not modify settings like uid from Cloudflare dashboard later, you have to modify it from here.\n", info, red, reset, green, reset)
+	// fmt.Printf("%s %sWarning%s: If you choose %sPages%s, you can not modify settings like uid from Cloudflare dashboard later, you have to modify it from here.\n", info, red, reset, green, reset)
 	fmt.Printf("%s %sWarning%s: If you choose %sPages%s, sometimes it takes about 5 minutes until you can open panel, so please keep calm!\n", info, red, reset, green, reset)
 	var deployType DeployType
+
 	for {
 		response := promptUser("Please enter 1 for Workers or 2 for Pages deployment: ")
 		switch response {
@@ -254,6 +262,7 @@ func configureBPB() {
 
 		var isAvailable bool
 		fmt.Printf("\n%s Checking domain availablity...\n", title)
+
 		if deployType == DTWorker {
 			isAvailable = isWorkerAvailable(ctx, projectName)
 		} else {
@@ -309,6 +318,7 @@ func configureBPB() {
 
 	fmt.Printf("\n%s Downloading %sworker.js%s...\n", title, green, reset)
 	workerPath := filepath.Join(srsPath, "worker.js")
+
 	for {
 		if err = downloadFile(workerURL, workerPath); err != nil {
 			failMessage("Error downloading worker.js", err)
@@ -323,6 +333,7 @@ func configureBPB() {
 
 	fmt.Printf("\n%s Creating KV namespace...\n", title)
 	var kvNamespace *kv.Namespace
+
 	for {
 		now := time.Now().Format("2006-01-02_15-04-05")
 		kvName := fmt.Sprintf("panel-kv-%s", now)
@@ -332,7 +343,6 @@ func configureBPB() {
 			if response := promptUser("Would you like to try again? (y/n): "); strings.ToLower(response) == "n" {
 				return
 			}
-
 			continue
 		}
 
@@ -343,15 +353,14 @@ func configureBPB() {
 	var panel string
 	switch deployType {
 	case DTWorker:
-		panel = deployBPBWorker(ctx, projectName, uid, trPass, proxyIP, fallback, subPath, workerPath, kvNamespace, customDomain)
+		panel = deployBPBWorker(ctx, projectName, uid, trPass, proxyIP, fallback, subPath, workerPath, kvNamespace, customDomain, srsPath)
 	case DTPage:
-		panel = deployBPBPage(ctx, projectName, uid, trPass, proxyIP, fallback, subPath, workerPath, kvNamespace, customDomain)
+		panel = deployBPBPage(ctx, projectName, uid, trPass, proxyIP, fallback, subPath, workerPath, kvNamespace, customDomain, srsPath)
 	}
 
 	checkBPBPanel(panel)
 	if err = openURL(panel); err != nil {
 		failMessage("Error opening panel", err)
-
 		return
 	}
 }
