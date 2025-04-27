@@ -171,7 +171,7 @@ func deployBPBPage(ctx context.Context, name string, uid string, pass string, pr
 			}
 			continue
 		}
-		successMessage("Page deployed successfully!")
+		successMessage("Page deployed successfully! It takes about 5 minutes to open panel, please wait...")
 		break
 	}
 

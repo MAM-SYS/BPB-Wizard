@@ -118,7 +118,6 @@ func (sp ScriptUpdateParams) MarshalMultipart() ([]byte, string, error) {
 		return nil, "", fmt.Errorf("error copying file content: %w", err)
 	}
 
-	err = writer.Close()
 	if err := writer.Close(); err != nil {
 		return nil, "", fmt.Errorf("error closing multipart writer: %w", err)
 	}
@@ -218,25 +217,21 @@ func enableWorkerSubdomain(ctx context.Context, name string) (*workers.ScriptSub
 		})
 }
 
-func updateWorkerSubDomain(ctx context.Context, domain string) (string, error) {
-	res, err := cfClient.Workers.Subdomains.Update(ctx, workers.SubdomainUpdateParams{AccountID: cf.F(cfAccount.ID), Subdomain: cf.F(domain)})
-	if err != nil {
-		return "", err
-	}
+// func updateWorkerSubDomain(ctx context.Context, domain string) (string, error) {
+// 	res, err := cfClient.Workers.Subdomains.Update(ctx, workers.SubdomainUpdateParams{AccountID: cf.F(cfAccount.ID), Subdomain: cf.F(domain)})
+// 	if err != nil {
+// 		return "", err
+// 	}
 
-	return res.Subdomain, nil
-}
+// 	return res.Subdomain, nil
+// }
 
 func isWorkerAvailable(ctx context.Context, name string) bool {
 	_, err := cfClient.Workers.Scripts.Get(ctx, name, workers.ScriptGetParams{AccountID: cf.F(cfAccount.ID)})
-	if err == nil {
-		return false
-	}
-
-	return true
+	return err != nil
 }
 
-func deployBPBWorker(ctx context.Context, name string, uid string, pass string, proxy string, fallback string, sub string, domain string, jsPath string, kvNamespace *kv.Namespace) string {
+func deployBPBWorker(ctx context.Context, name string, uid string, pass string, proxy string, fallback string, sub string, jsPath string, kvNamespace *kv.Namespace) string {
 	for {
 		fmt.Printf("\n%s Creating Worker...\n", title)
 		_, err := createWorker(ctx, name, uid, pass, proxy, fallback, sub, jsPath, kvNamespace)
@@ -264,19 +259,19 @@ func deployBPBWorker(ctx context.Context, name string, uid string, pass string, 
 		break
 	}
 
-	for {
-		var err error
-		_, err = updateWorkerSubDomain(ctx, domain)
-		if err != nil {
-			failMessage("Error updating worker subdomain", err)
-			if response := promptUser("Would you like to try again? (y/n): "); strings.ToLower(response) == "n" {
-				return ""
-			}
-			continue
-		}
-		successMessage("Worker subdomain customized successfully!")
-		break
-	}
+	// for {
+	// 	var err error
+	// 	_, err = updateWorkerSubDomain(ctx, domain)
+	// 	if err != nil {
+	// 		failMessage("Error updating worker subdomain", err)
+	// 		if response := promptUser("Would you like to try again? (y/n): "); strings.ToLower(response) == "n" {
+	// 			return ""
+	// 		}
+	// 		continue
+	// 	}
+	// 	successMessage("Worker subdomain customized successfully!")
+	// 	break
+	// }
 
 	resp, err := cfClient.Workers.Subdomains.Get(ctx, workers.SubdomainGetParams{AccountID: cf.F(cfAccount.ID)})
 	if err != nil {
