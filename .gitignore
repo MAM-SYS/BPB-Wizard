@@ -2,7 +2,11 @@
 !.gitignore
 !go.mod
 !go.sum
-!BPB-Wizard.go
+!main.go
+!oauth.go
+!pages.go
+!workers.go
+!wizard.go
 !.github/
 !.github/**
 !icon.ico
