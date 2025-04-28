@@ -78,6 +78,17 @@ func downloadFile(url, dest string) error {
 	return nil
 }
 
+func isAndroid() bool {
+	if runtime.GOOS == "android" {
+		return true
+	}
+
+	prefix := os.Getenv("PREFIX")
+	home := os.Getenv("HOME")
+
+	return strings.Contains(prefix, "com.termux") || strings.Contains(home, "com.termux")
+}
+
 func openURL(url string) error {
 	var cmd string
 	var args = []string{url}
@@ -85,13 +96,15 @@ func openURL(url string) error {
 	switch runtime.GOOS {
 	case "darwin": // MacOS
 		cmd = "open"
-		args = []string{url}
 	case "windows": // Windows
 		cmd = "rundll32"
 		args = []string{"url.dll,FileProtocolHandler", url}
-	default: // Linux, BSD, etc.
-		cmd = "xdg-open"
-		args = []string{url}
+	default: // Linux, BSD, Android, etc.
+		if isAndroid() {
+			cmd = "termux-open-url"
+		} else {
+			cmd = "xdg-open"
+		}
 	}
 
 	return exec.Command(cmd, args...).Start()

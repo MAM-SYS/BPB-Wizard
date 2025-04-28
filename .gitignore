@@ -13,3 +13,5 @@
 !static/
 !static/**
 !RELEASE.md
+!assets
+!assets/**
