@@ -79,14 +79,13 @@ func downloadFile(url, dest string) error {
 }
 
 func isAndroid() bool {
-	if runtime.GOOS == "android" {
+	prefix := os.Getenv("PREFIX")
+	home := os.Getenv("HOME")
+	if runtime.GOOS == "android" || strings.Contains(prefix, "com.termux") || strings.Contains(home, "com.termux") {
 		return true
 	}
 
-	prefix := os.Getenv("PREFIX")
-	home := os.Getenv("HOME")
-
-	return strings.Contains(prefix, "com.termux") || strings.Contains(home, "com.termux")
+	return false
 }
 
 func openURL(url string) error {
