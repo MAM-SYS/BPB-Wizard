@@ -1,17 +1,18 @@
-name: Build BPB-Wizard
+name: Build and Release
+
+env:
+  VERSION: 2.0.0
+
+permissions:
+  contents: write
 
 on:
-  push:
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
   build:
-    strategy:
-      matrix:
-        os: [ ubuntu-latest, macos-latest, windows-latest ]
-    name: Build
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
+
     steps:
       - name: Check out code
         uses: actions/checkout@v4
@@ -20,5 +21,28 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ^1.24
+
       - name: Build
-        run: make build
+        run: make build VERSION=$VERSION
+
+      - name: Read release note
+        id: read_release
+        shell: bash
+        run: |
+          r=$(cat RELEASE.md)         
+          r="${r//'%'/'%25'}"                               
+          r="${r//$'\n'/'%0A'}"                             
+          r="${r//$'\r'/'%0D'}"                             
+          echo "RELEASE_BODY=$r" >> $GITHUB_OUTPUT          
+
+      - name: Upload Release Assets
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: bin/*
+          tag: v${{ env.VERSION }}
+          release_name: Release v${{ env.VERSION }}
+          overwrite: true
+          file_glob: true
+          prerelease: true
+          body: ${{ steps.read_release.outputs.RELEASE_BODY }}

@@ -11,3 +11,6 @@
 !.github/**
 !icon.ico
 !Makefile
+!static/
+!static/**
+!RELEASE.md
