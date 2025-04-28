@@ -100,7 +100,8 @@ func openURL(url string) error {
 		args = []string{"url.dll,FileProtocolHandler", url}
 	default: // Linux, BSD, Android, etc.
 		if isAndroid() {
-			cmd = "termux-open-url"
+			termuxPath := os.Getenv("PATH")
+			cmd = filepath.Join(termuxPath, "termux-open-url")
 		} else {
 			cmd = "xdg-open"
 		}
