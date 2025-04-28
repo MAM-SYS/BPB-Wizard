@@ -9,7 +9,6 @@
 !wizard.go
 !.github/
 !.github/**
-!icon.ico
 !Makefile
 !static/
 !static/**
