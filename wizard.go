@@ -218,7 +218,7 @@ func configureBPB() {
 		failMessage("Error getting account", err)
 	}
 
-	srsPath, err := os.MkdirTemp("", ".bpb-wizard")
+	srcPath, err := os.MkdirTemp("", ".bpb-wizard")
 	workerURL := "https://github.com/bia-pain-bache/BPB-Worker-Panel/releases/latest/download/worker.js"
 	if err != nil {
 		failMessage("Error creating temp directory", err)
@@ -228,7 +228,7 @@ func configureBPB() {
 	fmt.Printf("\n%s Get settings...\n", title)
 	fmt.Printf("\n%s You can use %sWorkers%s or %sPages%s to deploy.\n", info, green, reset, green, reset)
 	// fmt.Printf("%s %sWarning%s: If you choose %sPages%s, you can not modify settings like uid from Cloudflare dashboard later, you have to modify it from here.\n", info, red, reset, green, reset)
-	fmt.Printf("%s %sWarning%s: If you choose %sPages%s, sometimes it takes about 5 minutes until you can open panel, so please keep calm!\n", info, red, reset, green, reset)
+	fmt.Printf("%s %sWarning%s: If you choose %sPages%s, sometimes it takes up to 5 minutes until you can access panel, so please keep calm!\n", info, red, reset, green, reset)
 	var deployType DeployType
 
 	for {
@@ -317,7 +317,7 @@ func configureBPB() {
 	}
 
 	fmt.Printf("\n%s Downloading %sworker.js%s...\n", title, green, reset)
-	workerPath := filepath.Join(srsPath, "worker.js")
+	workerPath := filepath.Join(srcPath, "worker.js")
 
 	for {
 		if err = downloadFile(workerURL, workerPath); err != nil {
@@ -351,11 +351,13 @@ func configureBPB() {
 	}
 
 	var panel string
+	cachePath := filepath.Join(srcPath, "tld.cache")
+
 	switch deployType {
 	case DTWorker:
-		panel = deployBPBWorker(ctx, projectName, uid, trPass, proxyIP, fallback, subPath, workerPath, kvNamespace, customDomain, srsPath)
+		panel = deployBPBWorker(ctx, projectName, uid, trPass, proxyIP, fallback, subPath, workerPath, kvNamespace, customDomain, cachePath)
 	case DTPage:
-		panel = deployBPBPage(ctx, projectName, uid, trPass, proxyIP, fallback, subPath, workerPath, kvNamespace, customDomain, srsPath)
+		panel = deployBPBPage(ctx, projectName, uid, trPass, proxyIP, fallback, subPath, workerPath, kvNamespace, customDomain, cachePath)
 	}
 
 	checkBPBPanel(panel)

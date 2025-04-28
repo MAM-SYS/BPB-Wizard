@@ -8,7 +8,6 @@ import (
 	"mime/multipart"
 	"net/textproto"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -149,9 +148,8 @@ func createPageDeployment(ctx context.Context, project *pages.Project, jsPath st
 	)
 }
 
-func addPagesCustomDomain(ctx context.Context, projectName string, customDomain string, srcPath string) (string, error) {
-	cacheFile := filepath.Join(srcPath, "tld.cache")
-	extractor, err := tldextract.New(cacheFile, false)
+func addPagesCustomDomain(ctx context.Context, projectName string, customDomain string, cachePath string) (string, error) {
+	extractor, err := tldextract.New(cachePath, false)
 	if err != nil {
 		panic(err)
 	}
@@ -213,7 +211,7 @@ func isPageAvailable(ctx context.Context, projectName string) bool {
 	return false
 }
 
-func deployBPBPage(ctx context.Context, name string, uid string, pass string, proxy string, fallback string, sub string, jsPath string, kvNamespace *kv.Namespace, customDomain string, srcPath string) string {
+func deployBPBPage(ctx context.Context, name string, uid string, pass string, proxy string, fallback string, sub string, jsPath string, kvNamespace *kv.Namespace, customDomain string, cachePath string) string {
 	var project *pages.Project
 	var err error
 
@@ -251,7 +249,7 @@ func deployBPBPage(ctx context.Context, name string, uid string, pass string, pr
 
 	if customDomain != "" {
 		for {
-			recordName, err := addPagesCustomDomain(ctx, name, customDomain, srcPath)
+			recordName, err := addPagesCustomDomain(ctx, name, customDomain, cachePath)
 			if err != nil {
 				failMessage("Error adding custom domain.", err)
 				if response := promptUser("Would you like to try again? (y/n): "); strings.ToLower(response) == "n" {

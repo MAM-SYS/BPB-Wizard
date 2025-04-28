@@ -9,7 +9,6 @@ import (
 	"mime/multipart"
 	"net/textproto"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -202,7 +201,6 @@ func createWorker(ctx context.Context, name string, uid string, pass string, pro
 	}
 
 	return result, nil
-
 }
 
 func createKVNamespace(ctx context.Context, ns string) (*kv.Namespace, error) {
@@ -225,9 +223,8 @@ func enableWorkerSubdomain(ctx context.Context, name string) (*workers.ScriptSub
 		})
 }
 
-func addCustomDomain(ctx context.Context, script string, customDomain string, srcPath string) (string, error) {
-	cacheFile := filepath.Join(srcPath, "tld.cache")
-	extractor, err := tldextract.New(cacheFile, false)
+func addWorkersCustomDomain(ctx context.Context, script string, customDomain string, cachePath string) (string, error) {
+	extractor, err := tldextract.New(cachePath, false)
 	if err != nil {
 		panic(err)
 	}
@@ -268,7 +265,7 @@ func isWorkerAvailable(ctx context.Context, name string) bool {
 	return err != nil
 }
 
-func deployBPBWorker(ctx context.Context, name string, uid string, pass string, proxy string, fallback string, sub string, jsPath string, kvNamespace *kv.Namespace, customDomain string, srcPath string) string {
+func deployBPBWorker(ctx context.Context, name string, uid string, pass string, proxy string, fallback string, sub string, jsPath string, kvNamespace *kv.Namespace, customDomain string, cachePath string) string {
 	for {
 		fmt.Printf("\n%s Creating Worker...\n", title)
 
@@ -303,7 +300,7 @@ func deployBPBWorker(ctx context.Context, name string, uid string, pass string, 
 		for {
 			var err error
 
-			_, err = addCustomDomain(ctx, name, customDomain, srcPath)
+			_, err = addWorkersCustomDomain(ctx, name, customDomain, cachePath)
 			if err != nil {
 				failMessage("Error adding custom domain.", err)
 				if response := promptUser("Would you like to try again? (y/n): "); strings.ToLower(response) == "n" {

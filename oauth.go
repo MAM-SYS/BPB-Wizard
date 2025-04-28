@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/base64"
 	"fmt"
 	"math/rand/v2"
@@ -13,6 +14,9 @@ import (
 	"github.com/cloudflare/cloudflare-go/v4/option"
 	"golang.org/x/oauth2"
 )
+
+//go:embed static/index.html
+var indexHTML []byte
 
 var (
 	cfClient      *cf.Client
@@ -126,22 +130,7 @@ func callback(w http.ResponseWriter, r *http.Request) {
 
 	obtainedToken <- token
 	successMessage("Cloudflare logged in successfully!")
-	htmlContent := `
-		<!DOCTYPE html>
-		<html>
-		<head>
-			<title>Closing Tab...</title>
-		</head>
-		<body>
-			<script type="text/javascript">
-				window.onload = function() {
-					window.close();
-				};
-			</script>
-			<p>This tab will automatically close.</p>
-		</body>
-		</html>
-	`
+
 	w.Header().Set("Content-Type", "text/html")
-	fmt.Fprint(w, htmlContent)
+	w.Write(indexHTML)
 }
