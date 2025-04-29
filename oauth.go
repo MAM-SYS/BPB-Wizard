@@ -93,11 +93,11 @@ func generateCodeChallenge(verifier string) string {
 	return base64.RawURLEncoding.EncodeToString(hash[:])
 }
 
-func login() error {
+func login(isAndroid bool) error {
 	url := generateAuthURL()
 	fmt.Printf("\n%s Login %sCloudflare%s...\n", title, orange, reset)
 
-	if err := openURL(url); err != nil {
+	if err := openURL(isAndroid, url); err != nil {
 		return err
 	}
 

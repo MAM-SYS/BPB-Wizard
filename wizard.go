@@ -78,17 +78,7 @@ func downloadFile(url, dest string) error {
 	return nil
 }
 
-func isAndroid() bool {
-	prefix := os.Getenv("PREFIX")
-	home := os.Getenv("HOME")
-	if runtime.GOOS == "android" || strings.Contains(prefix, "com.termux") || strings.Contains(home, "com.termux") {
-		return true
-	}
-
-	return false
-}
-
-func openURL(url string) error {
+func openURL(isAndroid bool, url string) error {
 	var cmd string
 	var args = []string{url}
 
@@ -99,9 +89,9 @@ func openURL(url string) error {
 		cmd = "rundll32"
 		args = []string{"url.dll,FileProtocolHandler", url}
 	default: // Linux, BSD, Android, etc.
-		if isAndroid() {
-			termuxPath := os.Getenv("PATH")
-			cmd = filepath.Join(termuxPath, "termux-open-url")
+		if isAndroid {
+			termuxBin := os.Getenv("PATH")
+			cmd = filepath.Join(termuxBin, "termux-open-url")
 		} else {
 			cmd = "xdg-open"
 		}
@@ -157,7 +147,7 @@ func successMessage(message string) {
 	fmt.Printf("%s %s\n", succMark, message)
 }
 
-func checkBPBPanel(url string) {
+func checkBPBPanel(isAndroid bool, url string) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
@@ -211,7 +201,7 @@ func checkBPBPanel(url string) {
 			return
 		}
 
-		if err = openURL(url); err != nil {
+		if err = openURL(isAndroid, url); err != nil {
 			failMessage("Error opening panel", err)
 			return
 		}
@@ -220,7 +210,7 @@ func checkBPBPanel(url string) {
 	}
 }
 
-func configureBPB() {
+func configureBPB(isAndroid bool) {
 	token := <-obtainedToken
 	ctx := context.Background()
 	cfClient = NewClient(token)
@@ -240,7 +230,6 @@ func configureBPB() {
 
 	fmt.Printf("\n%s Get settings...\n", title)
 	fmt.Printf("\n%s You can use %sWorkers%s or %sPages%s to deploy.\n", info, green, reset, green, reset)
-	// fmt.Printf("%s %sWarning%s: If you choose %sPages%s, you can not modify settings like uid from Cloudflare dashboard later, you have to modify it from here.\n", info, red, reset, green, reset)
 	fmt.Printf("%s %sWarning%s: If you choose %sPages%s, sometimes it takes up to 5 minutes until you can access panel, so please keep calm!\n", info, red, reset, green, reset)
 	var deployType DeployType
 
@@ -373,9 +362,5 @@ func configureBPB() {
 		panel = deployBPBPage(ctx, projectName, uid, trPass, proxyIP, fallback, subPath, workerPath, kvNamespace, customDomain, cachePath)
 	}
 
-	checkBPBPanel(panel)
-	if err = openURL(panel); err != nil {
-		failMessage("Error opening panel", err)
-		return
-	}
+	checkBPBPanel(isAndroid, panel)
 }

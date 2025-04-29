@@ -9,6 +9,9 @@ A wizard to facilitate [BPB Panel](https://github.com/bia-pain-bache/BPB-Worker-
 
 ## 💡 Usage
 
+> [!IMPORTANT]
+> Please disconnect any Proxy or VPN before running wizard.
+
 - You can download executable files from [Releases](https://github.com/bia-pain-bache/BPB-Wizard/releases) based on your OS and just run it.
 - Android users (Termux) can use these scripts (Have bug temporarily):
 
