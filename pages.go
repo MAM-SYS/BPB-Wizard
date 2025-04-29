@@ -211,7 +211,22 @@ func isPageAvailable(ctx context.Context, projectName string) bool {
 	return false
 }
 
-func deployBPBPage(ctx context.Context, name string, uid string, pass string, proxy string, fallback string, sub string, jsPath string, kvNamespace *kv.Namespace, customDomain string, cachePath string) string {
+func deployBPBPage(
+	ctx context.Context, 
+	name string, 
+	uid string, 
+	pass string, 
+	proxy string, 
+	fallback string, 
+	sub string, 
+	jsPath string, 
+	kvNamespace *kv.Namespace, 
+	customDomain string, 
+	cachePath string,
+) (
+	panelURL string, 
+	er error,
+) {
 	var project *pages.Project
 	var err error
 
@@ -222,7 +237,7 @@ func deployBPBPage(ctx context.Context, name string, uid string, pass string, pr
 		if err != nil {
 			failMessage("Error deploying page", err)
 			if response := promptUser("Would you like to try again? (y/n): "); strings.ToLower(response) == "n" {
-				return ""
+				return "", nil
 			}
 			continue
 		}
@@ -238,7 +253,7 @@ func deployBPBPage(ctx context.Context, name string, uid string, pass string, pr
 		if err != nil {
 			failMessage("Error deploying page", err)
 			if response := promptUser("Would you like to try again? (y/n): "); strings.ToLower(response) == "n" {
-				return ""
+				return "", nil
 			}
 			continue
 		}
@@ -253,18 +268,17 @@ func deployBPBPage(ctx context.Context, name string, uid string, pass string, pr
 			if err != nil {
 				failMessage("Error adding custom domain.", err)
 				if response := promptUser("Would you like to try again? (y/n): "); strings.ToLower(response) == "n" {
-					return ""
+					return "", nil
 				}
 				continue
 			}
 
 			successMessage("Custom domain added to pages successfully!")
-			// recordName := strings.Split(customDomain, ".")[0]
 			fmt.Printf("%s %sWarning%s: You should create a CNAME record with Name: %s%s%s and Target: %s%s.pages.dev%s, Otherwise your Custom Domain will not work.\n", info, red, reset, green, recordName, reset, green, name, reset)
-			return "https://" + customDomain + "/panel"
+			return "https://" + customDomain + "/panel", nil
 		}
 	}
 
 	successMessage("It takes up to 5 minutes to open panel, please wait...")
-	return "https://" + project.Subdomain + "/panel"
+	return "https://" + project.Subdomain + "/panel", nil
 }

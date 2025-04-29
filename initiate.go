@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -30,10 +31,21 @@ func setDNS() {
 			Resolver: &net.Resolver{
 				PreferGo: true,
 				Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-					return net.Dial("udp", "8.8.8.8:53")
+					conn, err := net.Dial("udp", "8.8.8:53")
+					if err != nil {
+						failMessage("Error dialing DNS (please disconnect your VPN and try again", nil)
+						log.Fatal(err)
+					}
+					return conn, nil
 				},
 			},
 		}
-		return d.DialContext(ctx, network, addr)
+		conn, err := d.DialContext(ctx, network, addr)
+		if err != nil {
+			failMessage("Error in DNS resolution (please disconnect your VPN and try again)", nil)
+			log.Fatal(err)
+		}
+		return conn, nil
 	}
+
 }

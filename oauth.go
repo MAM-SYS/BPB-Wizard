@@ -48,7 +48,7 @@ func NewClient(token *oauth2.Token) *cf.Client {
 func getAccount(ctx context.Context) (*accounts.Account, error) {
 	res, err := cfClient.Accounts.List(ctx, accounts.AccountListParams{})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error listing accounts - %v", err)
 	}
 
 	return &res.Result[0], nil
@@ -126,6 +126,7 @@ func callback(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		failMessage("Error exchanging oauthToken", err)
+		return
 	}
 
 	obtainedToken <- token

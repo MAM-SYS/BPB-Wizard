@@ -265,7 +265,22 @@ func isWorkerAvailable(ctx context.Context, name string) bool {
 	return err != nil
 }
 
-func deployBPBWorker(ctx context.Context, name string, uid string, pass string, proxy string, fallback string, sub string, jsPath string, kvNamespace *kv.Namespace, customDomain string, cachePath string) string {
+func deployBPBWorker(
+	ctx context.Context,
+	name string,
+	uid string,
+	pass string,
+	proxy string,
+	fallback string,
+	sub string,
+	jsPath string,
+	kvNamespace *kv.Namespace,
+	customDomain string,
+	cachePath string,
+) (
+	panelURL string,
+	err error,
+) {
 	for {
 		fmt.Printf("\n%s Creating Worker...\n", title)
 
@@ -273,7 +288,7 @@ func deployBPBWorker(ctx context.Context, name string, uid string, pass string, 
 		if err != nil {
 			failMessage("Error deploying worker", err)
 			if response := promptUser("Would you like to try again? (y/n): "); strings.ToLower(response) == "n" {
-				return ""
+				return "", nil
 			}
 			continue
 		}
@@ -287,7 +302,7 @@ func deployBPBWorker(ctx context.Context, name string, uid string, pass string, 
 		if err != nil {
 			failMessage("Error enabling worker subdomain", err)
 			if response := promptUser("Would you like to try again? (y/n): "); strings.ToLower(response) == "n" {
-				return ""
+				return "", nil
 			}
 			continue
 		}
@@ -304,21 +319,20 @@ func deployBPBWorker(ctx context.Context, name string, uid string, pass string, 
 			if err != nil {
 				failMessage("Error adding custom domain.", err)
 				if response := promptUser("Would you like to try again? (y/n): "); strings.ToLower(response) == "n" {
-					return ""
+					return "", nil
 				}
 				continue
 			}
 
 			successMessage("Custom domain added to worker successfully!")
-			return "https://" + customDomain + "/panel"
+			return "https://" + customDomain + "/panel", nil
 		}
 	}
 
 	resp, err := cfClient.Workers.Subdomains.Get(ctx, workers.SubdomainGetParams{AccountID: cf.F(cfAccount.ID)})
 	if err != nil {
-		failMessage("Error getting worker subdomain", err)
-		return ""
+		return "", fmt.Errorf("error getting worker subdomain - %w", err)
 	}
 
-	return "https://" + name + "." + resp.Subdomain + ".workers.dev/panel"
+	return "https://" + name + "." + resp.Subdomain + ".workers.dev/panel", nil
 }

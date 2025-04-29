@@ -46,14 +46,6 @@ func (dt DeployType) String() string {
 	return DeployTypeNames[dt]
 }
 
-func promptUser(prompt string) string {
-	fmt.Printf("%s %s", ask, prompt)
-	var response string
-	fmt.Scanln(&response)
-
-	return strings.TrimSpace(response)
-}
-
 func downloadFile(url, dest string) error {
 	resp, err := http.Get(url)
 	if err != nil {
@@ -76,28 +68,6 @@ func downloadFile(url, dest string) error {
 	}
 
 	return nil
-}
-
-func openURL(isAndroid bool, url string) error {
-	var cmd string
-	var args = []string{url}
-
-	switch runtime.GOOS {
-	case "darwin": // MacOS
-		cmd = "open"
-	case "windows": // Windows
-		cmd = "rundll32"
-		args = []string{"url.dll,FileProtocolHandler", url}
-	default: // Linux, BSD, Android, etc.
-		if isAndroid {
-			termuxBin := os.Getenv("PATH")
-			cmd = filepath.Join(termuxBin, "termux-open-url")
-		} else {
-			cmd = "xdg-open"
-		}
-	}
-
-	return exec.Command(cmd, args...).Start()
 }
 
 func generateRandomString(charSet string, length int, isDomain bool) string {
@@ -133,6 +103,14 @@ func generateSubURIPath(uriLength int) string {
 	return generateRandomString(charset, uriLength, false)
 }
 
+func promptUser(prompt string) string {
+	fmt.Printf("%s %s", ask, prompt)
+	var response string
+	fmt.Scanln(&response)
+
+	return strings.TrimSpace(response)
+}
+
 func failMessage(message string, err error) {
 	errMark := bold + red + "✗" + reset
 	if err != nil {
@@ -147,7 +125,33 @@ func successMessage(message string) {
 	fmt.Printf("%s %s\n", succMark, message)
 }
 
-func checkBPBPanel(isAndroid bool, url string) {
+func openURL(isAndroid bool, url string) error {
+	var cmd string
+	var args = []string{url}
+
+	switch runtime.GOOS {
+	case "darwin": // MacOS
+		cmd = "open"
+	case "windows": // Windows
+		cmd = "rundll32"
+		args = []string{"url.dll,FileProtocolHandler", url}
+	default: // Linux, BSD, Android, etc.
+		if isAndroid {
+			termuxBin := os.Getenv("PATH")
+			cmd = filepath.Join(termuxBin, "termux-open-url")
+		} else {
+			cmd = "xdg-open"
+		}
+	}
+
+	err := exec.Command(cmd, args...).Start()
+	if err != nil {
+		return fmt.Errorf("error opening URL - %v", err)
+	}
+	return nil
+}
+
+func checkBPBPanel(isAndroid bool, url string) error {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
@@ -165,7 +169,11 @@ func checkBPBPanel(isAndroid bool, url string) {
 	}
 
 	dialContext := func(ctx context.Context, network, addr string) (net.Conn, error) {
-		return dialer.DialContext(ctx, network, addr)
+		conn, err := dialer.DialContext(ctx, network, addr)
+		if err != nil {
+			return nil, err
+		}
+		return conn, nil
 	}
 
 	transport := &http.Transport{
@@ -198,19 +206,20 @@ func checkBPBPanel(isAndroid bool, url string) {
 		prompt := fmt.Sprintf("Would you like to open %sBPB panel%s in browser? (y/n): ", blue, reset)
 
 		if response := promptUser(prompt); strings.ToLower(response) == "n" {
-			return
+			return nil
 		}
 
 		if err = openURL(isAndroid, url); err != nil {
-			failMessage("Error opening panel", err)
-			return
+			return err
 		}
 
-		return
+		return nil
 	}
+
+	return nil
 }
 
-func configureBPB(isAndroid bool) {
+func configureBPB(isAndroid bool) error {
 	token := <-obtainedToken
 	ctx := context.Background()
 	cfClient = NewClient(token)
@@ -218,14 +227,13 @@ func configureBPB(isAndroid bool) {
 
 	cfAccount, err = getAccount(ctx)
 	if err != nil {
-		failMessage("Error getting account", err)
+		return err
 	}
 
 	srcPath, err := os.MkdirTemp("", ".bpb-wizard")
 	workerURL := "https://github.com/bia-pain-bache/BPB-Worker-Panel/releases/latest/download/worker.js"
 	if err != nil {
-		failMessage("Error creating temp directory", err)
-		return
+		return fmt.Errorf("error creating temp directory - %v", err)
 	}
 
 	fmt.Printf("\n%s Get settings...\n", title)
@@ -325,7 +333,7 @@ func configureBPB(isAndroid bool) {
 		if err = downloadFile(workerURL, workerPath); err != nil {
 			failMessage("Error downloading worker.js", err)
 			if response := promptUser("Would you like to try again? (y/n): "); strings.ToLower(response) == "n" {
-				return
+				return nil
 			}
 			continue
 		}
@@ -343,7 +351,7 @@ func configureBPB(isAndroid bool) {
 		if err != nil {
 			failMessage("Error creating KV!", err)
 			if response := promptUser("Would you like to try again? (y/n): "); strings.ToLower(response) == "n" {
-				return
+				return nil
 			}
 			continue
 		}
@@ -357,10 +365,21 @@ func configureBPB(isAndroid bool) {
 
 	switch deployType {
 	case DTWorker:
-		panel = deployBPBWorker(ctx, projectName, uid, trPass, proxyIP, fallback, subPath, workerPath, kvNamespace, customDomain, cachePath)
+		panel, err = deployBPBWorker(ctx, projectName, uid, trPass, proxyIP, fallback, subPath, workerPath, kvNamespace, customDomain, cachePath)
 	case DTPage:
-		panel = deployBPBPage(ctx, projectName, uid, trPass, proxyIP, fallback, subPath, workerPath, kvNamespace, customDomain, cachePath)
+		panel, err = deployBPBPage(ctx, projectName, uid, trPass, proxyIP, fallback, subPath, workerPath, kvNamespace, customDomain, cachePath)
 	}
 
-	checkBPBPanel(isAndroid, panel)
+	if err != nil {
+		return err
+	}
+
+	if panel == "" {
+		return fmt.Errorf("error deploying panel")
+	}
+
+	if err := checkBPBPanel(isAndroid, panel); err != nil {
+		return err
+	}
+	return nil
 }
