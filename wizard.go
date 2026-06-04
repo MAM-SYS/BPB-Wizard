@@ -394,8 +394,7 @@ func createPanel() {
 	ctx := context.Background()
 	var err error
 	if cfClient == nil || cfAccount == nil {
-		go login()
-		token := <-obtainedToken
+		token := login()
 		cfClient = NewClient(token)
 
 		cfAccount, err = getAccount(ctx)
@@ -606,8 +605,7 @@ func modifyPanel() {
 	ctx := context.Background()
 	var err error
 	if cfClient == nil || cfAccount == nil {
-		go login()
-		token := <-obtainedToken
+		token := login()
 		cfClient = NewClient(token)
 
 		cfAccount, err = getAccount(ctx)

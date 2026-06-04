@@ -5,10 +5,14 @@ import (
 	"crypto/sha256"
 	_ "embed"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand/v2"
 	"net/http"
+	"os"
+	"time"
 
 	cf "github.com/cloudflare/cloudflare-go/v4"
 	"github.com/cloudflare/cloudflare-go/v4/accounts"
@@ -18,6 +22,10 @@ import (
 
 //go:embed static/index.html
 var indexHTML []byte
+
+type oauthServer struct {
+	server *http.Server
+}
 
 var (
 	cfClient      *cf.Client
@@ -94,7 +102,13 @@ func generateCodeChallenge(verifier string) string {
 	return base64.RawURLEncoding.EncodeToString(hash[:])
 }
 
-func login() {
+func login() *oauth2.Token {
+	if token, err := readStoredToken(); err != nil {
+		failMessage("failed to read stored token")
+	} else {
+		return token
+	}
+
 	url := generateAuthURL()
 	fmt.Printf("\n%s Login %s...\n", title, fmtStr("Cloudflare", ORANGE, true))
 
@@ -102,6 +116,33 @@ func login() {
 		failMessage("Failed to login.")
 		log.Fatalln(err)
 	}
+
+	oauth := &oauthServer{server: &http.Server{Addr: ":8976"}}
+	go oauth.listen()
+	defer oauth.shutdown()
+
+	return <-obtainedToken
+}
+
+func readStoredToken() (*oauth2.Token, error) {
+	_, err := os.Stat("token")
+	if err != nil {
+		return nil, err
+	}
+
+	content, err := os.ReadFile("token")
+	if err != nil {
+		return nil, err
+	}
+
+	var token oauth2.Token
+	_ = json.Unmarshal(content, &token)
+
+	if token.Expiry.Before(time.Now()) {
+		return nil, errors.New("token expired")
+	}
+
+	return &token, nil
 }
 
 func callback(w http.ResponseWriter, r *http.Request) {
@@ -128,9 +169,33 @@ func callback(w http.ResponseWriter, r *http.Request) {
 		log.Fatalln(err)
 	}
 
+	tokenJson, err := json.MarshalIndent(token, "", "  ")
+	err = os.WriteFile("token", tokenJson, 0600)
+	if err != nil {
+		failMessage("Failed to store token.")
+		log.Println(err)
+	}
+
 	obtainedToken <- token
 	successMessage("Cloudflare logged in successfully!")
 
 	w.Header().Set("Content-Type", "text/html")
 	w.Write(indexHTML)
+}
+
+func (o *oauthServer) listen() {
+	http.HandleFunc("/oauth/callback", callback)
+	if err := o.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		failMessage("Error serving localhost.")
+		log.Fatalln(err)
+	}
+}
+
+func (o *oauthServer) shutdown() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := o.server.Shutdown(ctx); err != nil {
+		log.Printf("Server forced to shutdown: %v", err)
+	}
 }
