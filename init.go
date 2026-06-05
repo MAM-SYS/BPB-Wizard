@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -80,15 +81,22 @@ func renderHeader() {
 }
 
 func initPaths() {
+	workDir := ".bpb-wizard"
 	var err error
-	srcPath, err = os.MkdirTemp("", ".bpb-wizard")
-	if err != nil {
-		failMessage("Failed to create temp directory.")
+	err = os.Mkdir(workDir, 0755)
+	if err != nil && !errors.Is(err, os.ErrExist) {
+		failMessage("Failed to create directory.")
 		log.Fatalln(err)
 	}
 
-	workerPath = filepath.Join(srcPath, "worker.js")
-	cachePath = filepath.Join(srcPath, "tld.cache")
+	currentDir, err := os.Getwd()
+	if err != nil {
+		failMessage("Failed to get current directory.")
+		log.Fatalln(err)
+	}
+
+	workerPath = filepath.Join(currentDir, workDir, "worker.js")
+	cachePath = filepath.Join(currentDir, workDir, "tld.cache")
 }
 
 func fmtStr(str string, color string, isBold bool) string {
